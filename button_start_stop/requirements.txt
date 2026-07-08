@@ -1,0 +1,6 @@
+# ⚠️ KHÔNG dùng file này. Thư viện Python DÙNG CHUNG cho cả repo.
+# → Cài từ file gốc DUY NHẤT ở thư mục cha:
+#
+#     pip install -r ../requirements.txt
+#
+# (file gốc = pip freeze của venv thật: Python 3.13, 28 gói, pin version chính xác)

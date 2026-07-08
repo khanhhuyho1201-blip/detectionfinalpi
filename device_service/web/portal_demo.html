@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<title>Portal UI Demo — Card Feeder WiFi Setup</title>
+<meta name="description" content="Interactive walkthrough of the captive portal WiFi setup screens as seen on a phone.">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:#0D0C11;
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:flex-start;
+  padding:24px 16px 40px;
+  font-family:"Inter",system-ui,sans-serif;
+  color:#E5DDD3;
+}
+
+/* ── top bar ── */
+.demo-header{
+  width:100%;
+  max-width:480px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:20px;
+}
+.demo-title{
+  font-size:13px;
+  font-weight:700;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:#7A7280;
+}
+.step-badge{
+  font-size:12px;
+  font-weight:700;
+  color:#D9B45A;
+  background:rgba(217,180,90,.12);
+  border:1px solid rgba(217,180,90,.3);
+  border-radius:999px;
+  padding:3px 12px;
+  letter-spacing:.04em;
+}
+
+/* ── screen label ── */
+.screen-label{
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+  color:#4A4455;
+  margin-bottom:12px;
+  text-align:center;
+  min-height:16px;
+}
+
+/* ── phone frame ── */
+.phone-wrap{
+  position:relative;
+  width:320px;
+  border-radius:44px;
+  background:#1A1820;
+  padding:14px 10px;
+  box-shadow:
+    0 0 0 1.5px #2A273A,
+    0 0 0 3px #181620,
+    0 40px 80px rgba(0,0,0,.7),
+    inset 0 1px 0 rgba(255,255,255,.06);
+}
+.phone-notch{
+  width:90px;height:22px;
+  background:#0A090E;
+  border-radius:0 0 14px 14px;
+  margin:0 auto 8px;
+}
+.phone-screen{
+  border-radius:32px;
+  overflow:hidden;
+  height:580px;
+  background:#0A090E;
+  position:relative;
+}
+
+/* ── portal content (exact copy from wifi_portal.py) ── */
+.portal-root{
+  height:100%;
+  overflow:hidden;
+  position:relative;
+}
+.portal-root *{box-sizing:border-box}
+
+/* portal variables + styles */
+.portal-root{
+  --bg:#0A090E;--s1:#131118;--bdr:#2A273A;
+  --gold:#D9B45A;--gold-hi:#F0D484;--gold-lo:#9C7430;
+  --text:#E5DDD3;--dim:#7A7280;--dim2:#4A4455;
+  --green:#4DD4A0;--red:#E55A5A;--blue:#7EB0F0;--orange:#F0A855;
+  font-family:"Inter",system-ui,sans-serif;
+  color:var(--text);
+  background:radial-gradient(130% 90% at 50% -5%,#1A1822 0%,var(--bg) 55%);
+  -webkit-tap-highlight-color:transparent;
+}
+.wrap{
+  max-width:100%;
+  padding:20px 18px 48px;
+  height:100%;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.brand{display:flex;align-items:center;gap:10px;justify-content:center;margin:8px 0 24px}
+.brand .cmd{font-weight:800;letter-spacing:.05em;color:var(--gold);font-size:18px;line-height:1}
+.brand .sep{width:1px;height:16px;background:rgba(217,180,90,.28);border-radius:1px;align-self:center;flex-shrink:0}
+.brand .bb{font-weight:600;font-style:normal;font-size:14px;letter-spacing:.01em;color:#7A95B0;line-height:1}
+h2{font-family:"Inter",system-ui,sans-serif;font-weight:800;font-size:26px;letter-spacing:-.02em;
+  text-align:center;margin:0 0 6px;
+  background:linear-gradient(180deg,var(--gold-hi),var(--gold) 48%,var(--gold-lo));
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.sub{color:var(--dim);font-size:13px;text-align:center;margin:0 auto 20px;max-width:320px;line-height:1.55}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:5px 14px;
+  border:1px solid rgba(217,180,90,.45);border-radius:999px;
+  font-size:13px;font-weight:600;color:var(--gold);margin:0 auto 24px;letter-spacing:.02em}
+.chip.blue{border-color:rgba(126,176,240,.5);color:var(--blue)}
+.chip.red{border-color:rgba(229,85,90,.5);color:var(--red)}
+.chip.center{display:flex;justify-content:center}
+.net-list{flex:1;overflow-y:auto;margin-bottom:12px;min-height:0;-webkit-overflow-scrolling:touch}
+.net{display:flex;align-items:center;gap:11px;padding:13px 14px;
+  background:linear-gradient(180deg,#17151C,#100E14);
+  border:1px solid var(--bdr);border-radius:14px;margin-bottom:9px;cursor:pointer;
+  transition:border-color .15s}
+.net:hover{border-color:rgba(217,180,90,.4)}
+.bars{flex:0 0 auto;display:flex;align-items:flex-end;gap:2px;height:18px}
+.bars i{width:3px;border-radius:1px;background:var(--dim2)}
+.bars i.on{background:var(--gold)}
+.ssid{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.sig{color:var(--dim);font-size:12px;margin-right:4px}
+.lock{color:var(--gold);font-size:11px;margin-left:4px}
+.pw-row{position:relative;margin:16px 0 6px}
+input[type=password],input[type=text]{
+  width:100%;padding:15px 48px 15px 15px;
+  background:var(--s1);border:1px solid var(--bdr);border-radius:12px;
+  color:var(--text);font-size:16px;outline:none;transition:border-color .15s}
+input:focus{border-color:var(--gold)}
+.eye{position:absolute;right:4px;top:50%;transform:translateY(-50%);
+  width:42px;height:42px;background:none;border:0;color:var(--dim);
+  font-size:17px;cursor:pointer;border-radius:8px}
+.btn{display:block;width:100%;padding:15px;border:0;border-radius:999px;
+  font-size:15px;font-weight:800;cursor:pointer;letter-spacing:.03em;margin-top:10px;
+  background:linear-gradient(180deg,var(--gold-hi),var(--gold) 55%,var(--gold-lo));
+  color:#1a1407;box-shadow:0 6px 22px rgba(217,180,90,.25)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.ghost{background:transparent;border:1px solid var(--bdr);color:var(--dim);box-shadow:none;font-weight:600}
+.btn.danger{background:linear-gradient(180deg,#F07070,var(--red) 55%,#A03030);color:#fff;box-shadow:0 6px 22px rgba(229,85,90,.25)}
+.spin-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:20px;padding:32px 0}
+.spinner{width:44px;height:44px;border:3px solid var(--bdr);border-top-color:var(--gold);border-radius:50%;animation:rot .75s linear infinite}
+.spinner.blue{border-top-color:var(--blue)}
+@keyframes rot{to{transform:rotate(360deg)}}
+.spin-label{color:var(--dim);font-size:14px}
+.back-link{display:inline-flex;align-items:center;gap:5px;color:var(--dim);
+  font-size:13px;cursor:pointer;margin-bottom:16px;background:none;border:0;padding:0}
+.err-center{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  flex:1;gap:16px;text-align:center;padding:24px 0}
+.err-icon{font-size:44px;line-height:1}
+.err-title{font-family:"Inter",system-ui,sans-serif;font-size:21px;font-weight:700;letter-spacing:-.01em;
+  background:linear-gradient(180deg,#F07070,var(--red) 60%);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.err-title.orange{background:linear-gradient(180deg,#F0C855,var(--orange) 60%);
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.err-ssid{font-family:ui-monospace,monospace;font-size:14px;color:var(--dim);
+  padding:5px 14px;background:var(--s1);border-radius:8px;border:1px solid var(--bdr)}
+.screen{display:none;flex-direction:column;flex:1}
+.screen.active{display:flex}
+
+/* ── nav controls ── */
+.nav-controls{
+  margin-top:20px;
+  width:320px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.nav-btn{
+  flex:1;
+  padding:11px 0;
+  border:1px solid #2A273A;
+  border-radius:12px;
+  background:#131118;
+  color:#7A7280;
+  font-size:13px;
+  font-weight:700;
+  cursor:pointer;
+  letter-spacing:.02em;
+  transition:all .15s;
+  display:flex;align-items:center;justify-content:center;gap:6px;
+}
+.nav-btn:hover:not(:disabled){border-color:rgba(217,180,90,.35);color:#D9B45A;background:#1A1720}
+.nav-btn:disabled{opacity:.3;cursor:default}
+.nav-btn.primary{
+  background:linear-gradient(180deg,#F0D484,#D9B45A 55%,#9C7430);
+  border-color:transparent;
+  color:#1a1407;
+}
+.nav-btn.primary:hover:not(:disabled){filter:brightness(1.08)}
+
+/* ── screen dots ── */
+.dots{
+  display:flex;gap:6px;align-items:center;justify-content:center;
+  margin-top:14px;
+}
+.dot{
+  width:6px;height:6px;border-radius:50%;
+  background:#2A273A;
+  transition:all .2s;
+}
+.dot.active{background:#D9B45A;width:18px;border-radius:3px}
+.dot.visited{background:#4A4455}
+@keyframes cdots{0%,100%{opacity:.2}50%{opacity:1}}
+.cdots span{animation:cdots 1.2s ease-in-out infinite}
+.cdots span:nth-child(2){animation-delay:.2s}
+.cdots span:nth-child(3){animation-delay:.4s}
+</style>
+
+<div class="demo-header">
+  <span class="demo-title">Portal UI — Phone Preview</span>
+  <span class="step-badge" id="stepBadge">Step 1 / 8</span>
+</div>
+
+<div class="screen-label" id="screenLabel">S0 — Welcome</div>
+
+<div class="phone-wrap">
+  <div class="phone-notch"></div>
+  <div class="phone-screen">
+    <div class="portal-root" id="portalRoot">
+      <div class="wrap">
+        <div class="brand">
+          <span class="cmd">CMD</span>
+          <span class="sep"></span>
+          <span class="bb">Bluebolt</span>
+        </div>
+
+        <!-- S0: Welcome -->
+        <div class="screen active" id="s0">
+          <h2 style="margin-bottom:0">WiFi Setup</h2>
+          <div style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:6px">
+            <div style="font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#7A7280">DEVICE WIFI NAME</div>
+            <div style="font-size:19px;font-weight:600;color:#E5DDD3;text-align:center;letter-spacing:-.01em">Luc yeu Truong rat nhieu</div>
+          </div>
+          <button class="btn" onclick="goDemo('s1')">Get Started</button>
+        </div>
+
+        <!-- S1: Scanning -->
+        <div class="screen" id="s1">
+          <h2>WiFi Setup</h2>
+          <div class="spin-wrap">
+            <div class="spinner"></div>
+            <span class="spin-label">Scanning networks…</span>
+          </div>
+        </div>
+
+        <!-- S2: WiFi List -->
+        <div class="screen" id="s2">
+          <h2>Select Network</h2>
+          <div class="net-list" id="netList"></div>
+          <button class="btn ghost">↻ Rescan</button>
+        </div>
+
+        <!-- S3: Password -->
+        <div class="screen" id="s3">
+          <button class="back-link" onclick="goDemo('s2')">← Back</button>
+          <h2>Password</h2>
+          <div class="chip center" id="s3chip">BBSW_Lounge_5G</div>
+          <div class="pw-row">
+            <input id="passInput" type="password" placeholder="Password WiFi"
+                   autocomplete="off" autocapitalize="off" spellcheck="false">
+            <button class="eye" id="eyeBtn" type="button" style="font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--dim)" onclick="var p=document.getElementById('passInput');var h=(p.type==='password');p.type=h?'text':'password';this.textContent=h?'HIDE':'SHOW';">SHOW</button>
+          </div>
+          <div style="flex:1"></div>
+          <button class="btn" onclick="goDemo('s4')">Connect</button>
+        </div>
+
+        <!-- S4: Connecting -->
+        <div class="screen" id="s4">
+          <div class="spin-wrap">
+            <div class="spinner blue"></div>
+            <div class="chip blue" id="s4chip">BBSW_Lounge_5G</div>
+          <div class="cdots" style="color:var(--dim);font-size:13px;margin-top:4px">connecting<span>.</span><span>.</span><span>.</span></div>
+          </div>
+        </div>
+
+        <!-- S5: Wrong password -->
+        <div class="screen" id="s5">
+          <div class="err-center">
+            <div class="err-icon" style="color:var(--red)">✗</div>
+            <div class="err-title">Wrong Password</div>
+            <div class="chip red" id="s5chip">BBSW_Lounge_5G</div>
+          </div>
+          <button class="btn danger" onclick="goDemo('s3')">Try Again</button>
+          <button class="btn ghost" onclick="goDemo('s2')">Other Network</button>
+        </div>
+
+        <!-- S6: Not found -->
+        <div class="screen" id="s6">
+          <div class="err-center">
+            <div class="err-icon">※</div>
+            <div class="err-title orange">Network Not Found</div>
+            <div class="err-ssid" id="s6ssid">BBSW_Lounge_5G</div>
+          </div>
+          <button class="btn" onclick="goDemo('s2')">↻ Rescan</button>
+          <button class="btn ghost" onclick="goDemo('s2')">Other Network</button>
+        </div>
+
+        <!-- S7: Success -->
+        <div class="screen" id="s7">
+          <div class="err-center">
+            <div class="err-icon" style="color:var(--green)">✓</div>
+            <div class="err-title" style="background:linear-gradient(180deg,#7DF0C0,#4DD4A0);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">Connected!</div>
+            <div class="chip" style="border-color:rgba(77,212,160,.45);color:#4DD4A0" id="s7chip">BBSW_Lounge_5G</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="nav-controls">
+  <button class="nav-btn" id="btnPrev" onclick="stepPrev()">← Back</button>
+  <button class="nav-btn primary" id="btnNext" onclick="stepNext()">Next →</button>
+</div>
+
+<div class="dots" id="dots"></div>
+
+<script>
+var STEPS = [
+  { id:'s0', label:'S0 — Welcome',      desc:'Step 1 / 8' },
+  { id:'s1', label:'S1 — Scanning',      desc:'Step 2 / 8' },
+  { id:'s2', label:'S2 — Network List',       desc:'Step 3 / 8' },
+  { id:'s3', label:'S3 — Password',        desc:'Step 4 / 8' },
+  { id:'s4', label:'S4 — Connecting',         desc:'Step 5 / 8' },
+  { id:'s5', label:'S5 — Wrong Password',   desc:'Step 6 / 8' },
+  { id:'s6', label:'S6 — Not Found', desc:'Step 7 / 8' },
+  { id:'s7', label:'S7 — Success ✓',         desc:'Step 8 / 8' }
+];
+
+var MOCK_NETWORKS = [
+  { ssid:'BBSW_Lounge_5G', signal:92, secure:true },
+  { ssid:'Viettel_2.4G_ABC', signal:74, secure:true },
+  { ssid:'FPT_Telecom_Home', signal:61, secure:true },
+  { ssid:'VNPT_WiFi_2F', signal:48, secure:true },
+  { ssid:'CafeOpen', signal:35, secure:false },
+];
+
+var cur = 0;
+
+function bars(sig){
+  var n = sig>=75?4:sig>=50?3:sig>=25?2:1;
+  var h=[7,10,14,18], o='';
+  for(var i=0;i<4;i++) o+='<i class="'+(i<n?'on':'')+'" style="height:'+h[i]+'px"></i>';
+  return o;
+}
+
+function buildNetList(){
+  var l = document.getElementById('netList');
+  l.innerHTML = '';
+  MOCK_NETWORKS.forEach(function(n){
+    var d = document.createElement('div'); d.className='net';
+    d.innerHTML='<span class="bars">'+bars(n.signal)+'</span>'+
+      '<span class="ssid">'+n.ssid+(n.secure?'<span class="lock">🔒</span>':'')+'</span>'+
+      '';
+    d.onclick = function(){
+      document.getElementById('s3chip').textContent = n.ssid;
+      document.getElementById('s4chip').textContent = n.ssid;
+      document.getElementById('s5chip').textContent = n.ssid;
+      document.getElementById('s7chip').textContent = n.ssid;
+      document.getElementById('s6ssid').textContent = n.ssid;
+      goDemo('s3');
+    };
+    l.appendChild(d);
+  });
+}
+buildNetList();
+
+function showStep(idx){
+  var screens = document.querySelectorAll('#portalRoot .screen');
+  screens.forEach(function(s){ s.classList.remove('active'); });
+  document.getElementById(STEPS[idx].id).classList.add('active');
+  document.getElementById('screenLabel').textContent = STEPS[idx].label;
+  document.getElementById('stepBadge').textContent   = STEPS[idx].desc;
+  document.getElementById('btnPrev').disabled = idx===0;
+  document.getElementById('btnNext').disabled = idx===STEPS.length-1;
+  document.getElementById('btnNext').textContent = idx===STEPS.length-2 ? 'Done →' : 'Next →';
+  renderDots(idx);
+}
+
+function renderDots(idx){
+  var d = document.getElementById('dots');
+  d.innerHTML='';
+  STEPS.forEach(function(_,i){
+    var dot=document.createElement('div');
+    dot.className='dot'+(i===idx?' active':i<idx?' visited':'');
+    d.appendChild(dot);
+  });
+}
+
+function goDemo(sid){
+  for(var i=0;i<STEPS.length;i++){
+    if(STEPS[i].id===sid){ cur=i; showStep(i); return; }
+  }
+}
+function stepNext(){ if(cur<STEPS.length-1){ cur++; showStep(cur); } }
+function stepPrev(){ if(cur>0){ cur--; showStep(cur); } }
+
+// keyboard nav
+document.addEventListener('keydown',function(e){
+  if(e.key==='ArrowRight') stepNext();
+  if(e.key==='ArrowLeft')  stepPrev();
+});
+
+showStep(0);
+</script>
+</html>

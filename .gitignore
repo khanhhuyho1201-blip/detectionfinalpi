@@ -1,0 +1,27 @@
+# ── Python ──
+.venv/
+venv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# ── Backups / logs / tạm ──
+*.bak
+*.bak.*
+*.log
+*.tmp
+backup_before_refactor/
+
+# ── Runtime / dữ liệu nhạy cảm của thiết bị ──
+# (mỗi máy tự sinh; KHÔNG commit)
+card_device/credentials.json
+card_device/printer.json
+card_device/*.bak.*
+*.mp4
+
+# ── Chromium kiosk profile / cache ──
+.card_kiosk_profile/
+
+# ── OS ──
+.DS_Store

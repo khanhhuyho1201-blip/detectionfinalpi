@@ -1,0 +1,23 @@
+[Unit]
+Description=Card Feeder — Web kiosk (server.py + Chromium)
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/bbsw/workspace/device_service
+ExecStart=/bin/bash /home/bbsw/workspace/device_service/kiosk.sh
+Restart=on-failure
+RestartSec=5
+# Cần DISPLAY và WAYLAND_DISPLAY để Chromium khởi động trên labwc.
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=CARD_WEB_HOST=0.0.0.0
+Environment="CARD_AP_SSID=CMD X BBSW"
+Environment=GTK_IM_MODULE=fcitx
+Environment=QT_IM_MODULE=fcitx
+Environment=XMODIFIERS=@im=fcitx
+
+[Install]
+WantedBy=graphical-session.target
