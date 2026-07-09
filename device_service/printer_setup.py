@@ -384,33 +384,62 @@ def _bt_name_is_mac(mac: str, name: str) -> bool:
 # ── Bluetooth pairing ─────────────────────────────────────────────────────────
 
 def bt_pair(mac: str) -> dict:
-    """Pair, trust, connect a BT device and bind RFCOMM. Returns {ok, error}."""
-    def run(args, t=12):
-        return subprocess.run(
-            ["bluetoothctl"] + args,
-            capture_output=True, text=True, timeout=t
-        )
+    """Pair, trust, connect a BT device and bind RFCOMM. Returns {ok, error}.
+
+    Mọi 'error' trả về là CÂU SẠCH cho người dùng (không bao giờ đổ chuỗi
+    exception/command thô ra UI). Timeout được bắt riêng -> câu thân thiện.
+    Đăng ký agent NoInputNoOutput trước khi pair: máy in BT (không phím/màn)
+    dùng kiểu 'Just Works', thiếu agent thì bluetoothctl treo tới hết timeout."""
+    def run(args, t=20):
+        """Chạy bluetoothctl; trả CompletedProcess, hoặc None nếu QUÁ THỜI GIAN."""
+        try:
+            return subprocess.run(["bluetoothctl"] + args,
+                                  capture_output=True, text=True, timeout=t)
+        except subprocess.TimeoutExpired:
+            return None
+        except Exception:
+            return False   # lỗi khác (không phải timeout)
 
     try:
-        r = run(["pair", mac])
-        already = "already paired" in (r.stdout + r.stderr).lower()
-        if r.returncode != 0 and not already:
-            return {"ok": False, "error": f"Pair failed: {(r.stderr or r.stdout).strip()}"}
+        # Bật adapter + agent (im lặng nếu đã bật) — giúp pair 'Just Works' xong ngay,
+        # không treo chờ xác nhận. KHÔNG để lộ popup hệ thống; chỉ chờ trong timeout.
+        for pre in (["power", "on"], ["agent", "NoInputNoOutput"], ["default-agent"]):
+            try:
+                subprocess.run(["bluetoothctl"] + pre, capture_output=True, timeout=6)
+            except Exception:
+                pass
 
-        run(["trust", mac])
+        r = run(["pair", mac], t=22)
+        if r is None:
+            return {"ok": False, "error": "Pairing timed out. Turn the printer on and put it "
+                                          "in pairing mode, then try again."}
+        if r is False:
+            return {"ok": False, "error": "Bluetooth is unavailable right now. Please try again."}
+        blob = (r.stdout + r.stderr).lower()
+        paired = (r.returncode == 0) or ("already paired" in blob) or ("successful" in blob)
+        if not paired:
+            return {"ok": False, "error": "Could not pair with this device. Make sure it is a "
+                                          "Bluetooth printer in pairing mode, then try again."}
 
-        r = run(["connect", mac])
-        if r.returncode != 0:
-            return {"ok": False, "error": f"Connect failed: {(r.stderr or r.stdout).strip()}"}
+        run(["trust", mac], t=8)
+
+        r = run(["connect", mac], t=15)
+        if r is None:
+            return {"ok": False, "error": "The device paired but did not connect in time. "
+                                          "Try again."}
+        if r is False or (r.returncode != 0 and "successful" not in (r.stdout + r.stderr).lower()):
+            return {"ok": False, "error": "Paired, but could not connect to the device."}
 
         # Bind RFCOMM (channel 1 is standard for BT printers)
-        subprocess.run(
-            ["rfcomm", "bind", RFCOMM_DEV, mac, "1"],
-            capture_output=True, timeout=5
-        )
+        try:
+            subprocess.run(["rfcomm", "bind", RFCOMM_DEV, mac, "1"],
+                           capture_output=True, timeout=6)
+        except Exception:
+            pass
         return {"ok": True}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    except Exception:
+        # Không bao giờ đổ chuỗi lỗi thô ra UI
+        return {"ok": False, "error": "Bluetooth error. Please try again."}
 
 
 # ── Hostname → IP resolution ──────────────────────────────────────────────────

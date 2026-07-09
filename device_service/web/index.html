@@ -212,15 +212,11 @@
   .countbox::before{content:"\2660"; position:absolute; left:50%; top:46%;
     transform:translate(-50%,-50%); font-family:var(--serif); line-height:1;
     font-size:min(57vw,71vh); z-index:-1; pointer-events:none;
-    color:rgba(217,180,90,.06);
-    animation:spadeglow 3.6s ease-in-out infinite}
-  /* ĐÈN CASINO (máy đánh bạc): lá bích như biểu tượng LED sau kính — ửng vàng ẤM
-     (gold→gold-hi) + QUẦNG SÁNG phồng lên rồi lịm dần theo nhịp thở chậm 3.6s
-     (hypnotic, không chớp gắt). Đỉnh vẫn đủ mờ để chữ Ready/0/412 đọc rõ. */
-  @keyframes spadeglow{
-    0%,100%{color:rgba(217,180,90,.05); filter:drop-shadow(0 0 6px rgba(217,180,90,.05))}
-    50%    {color:rgba(244,220,147,.16); filter:drop-shadow(0 0 30px rgba(244,220,147,.42))}}
-  @media (prefers-reduced-motion:reduce){.countbox::before{animation:none;color:rgba(217,180,90,.08);filter:none}}
+    color:var(--gold);
+    /* TĨNH hẳn — KHÔNG animation, KHÔNG filter → GPU idle ~0% (blink cũ đốt ~9% GPU
+       24/7 cho hiệu ứng gần như không thấy). Máy chạy mát/tiết kiệm hơn + loại sạch
+       mọi cạnh tranh GPU khi cuộn. Con lá vẫn hiện làm nền casino cho chip. */
+    opacity:.08}
   .count{font-family:var(--serif);font-weight:600;line-height:1;font-size:clamp(52px,10vh,92px);
     font-variant-numeric:tabular-nums;background:var(--gold-grad);-webkit-background-clip:text;background-clip:text;color:transparent;
     text-shadow:0 2px 18px rgba(217,180,90,.18);padding:.06em 0}
@@ -310,7 +306,12 @@
   .prnbox{position:relative;background:var(--panel);
     border:1px solid var(--line);border-radius:24px;padding:28px 28px 24px;
     width:100%;max-width:460px;max-height:92vh;overflow-y:auto;display:flex;flex-direction:column;gap:18px;
-    box-shadow:0 24px 64px rgba(0,0,0,.7)}
+    box-shadow:0 24px 64px rgba(0,0,0,.7);
+    /* cuộn MƯỢT trên Pi: contain cô lập vùng cuộn khỏi việc render() ghi DOM ngoài
+       mỗi 500ms (nút Start, trạng thái…) — thay đổi ngoài không còn ép sơn lại list;
+       will-change:scroll-position là gợi ý ĐÚNG cho compositor cuộn (không phải
+       translateZ hack, vốn có khi còn ép sơn lại). */
+    contain:layout paint;will-change:scroll-position;overscroll-behavior:contain}
   .prnbox h3{font-family:var(--serif);font-weight:700;font-size:1.5rem;margin:0;padding-right:2.5rem;
     background:var(--gold-grad);-webkit-background-clip:text;background-clip:text;color:transparent}
   .prnox{position:absolute;top:14px;right:18px;background:none;border:0;color:var(--dim);font-size:1.6rem;line-height:1;cursor:pointer;padding:4px}
@@ -454,13 +455,17 @@
     html.kiosk .sheet h3{font-size:1.05rem;margin-bottom:0}
     html.kiosk #quitBtn{font-size:9px !important;padding:.18rem .55rem !important}
     html.kiosk .sheet .lbl{font-size:9px;letter-spacing:.14em;margin-bottom:0}
+    /* Icon topbar BẤM ĐƯỢC (gear/wifi/printer): nới HIT-AREA ~46px, glyph giữ nguyên
+       (ardStat/conn chỉ là đèn báo nhưng to đều cho cân đối, bấm vô hại). */
+    html.kiosk .statico,html.kiosk .gear{width:2.9rem;height:2.9rem}
     /* tap targets bumped 2026-07-08 (user: 3.5" too small): X/Setup/Print bigger + wider.
        Printer/WiFi rows then trimmed slightly so 3 recent runs fit WITHOUT scrolling. */
-    html.kiosk .close{font-size:1.9rem;padding:14px;top:0;right:0}
+    /* X đưa LÊN ngang chữ "Settings" (padding-top nhỏ) + vùng chạm to kéo xuống dưới (padding-bottom lớn) → dễ bấm */
+    html.kiosk .close{font-size:2rem;padding:2px 12px 24px;top:2px;right:4px;line-height:1}
     html.kiosk .sr-label{font-size:12.5px}
-    html.kiosk .setrow{min-height:38px;gap:.5rem;padding:.12rem 0}
+    html.kiosk .setrow{min-height:46px;gap:.5rem;padding:.12rem 0}
     html.kiosk .sr-dot{width:.45rem;height:.45rem}
-    html.kiosk .sr-btn{min-height:38px;font-size:13px;padding:.4rem .9rem;border-radius:9px}
+    html.kiosk .sr-btn{min-height:44px;font-size:13px;padding:.55rem 1rem;border-radius:9px}  /* Setup ≥44px */
     html.kiosk #prnSetupBtn,html.kiosk #wifiSetupBtn{width:7.5em}
     html.kiosk .shdiv{margin:.08rem 0}
     html.kiosk .run{min-height:46px;padding:.5rem .65rem}
@@ -474,13 +479,13 @@
     html.kiosk .prnbox h3{font-size:1.3rem}
     html.kiosk .prnox{font-size:1.9rem;padding:12px;top:0;right:0}
     html.kiosk .prn-status .sr-label{font-size:13px}
-    html.kiosk .prn-status .sr-btn{min-height:36px;font-size:12px;padding:.45rem .85rem}
+    html.kiosk .prn-status .sr-btn{min-height:44px;font-size:12px;padding:.55rem .95rem}  /* Change/Remove ≥44px */
     html.kiosk .prnTab{padding:.6rem .3rem;font-size:14px}
     html.kiosk .prnActBtn{padding:.75rem;font-size:14px}
     html.kiosk .prnCard{padding:9px 11px;min-height:48px}
     html.kiosk .prnCard .pc-name{font-size:14px}
     html.kiosk .prnCard .pc-sub{font-size:11px}
-    html.kiosk .prnAddBtn,html.kiosk .prnPairBtn{min-height:36px;padding:.5rem .9rem;font-size:13px}
+    html.kiosk .prnAddBtn,html.kiosk .prnPairBtn{min-height:44px;padding:.6rem 1rem;font-size:13px}  /* Add/Pair ≥44px */
     html.kiosk .prnMsg{font-size:12px}
   }
 
@@ -505,6 +510,8 @@
      phải nổi LÊN TRÊN nó, nếu không sẽ bị .prnov (nền đục 95%) che, "không thấy popup". */
   #pchov{z-index:62}
   #prrov{z-index:62}  /* confirm Remove cũng mở từ trong Printer Setup → phải nổi lên trên */
+  #pmsgov{z-index:63}  /* popup THÔNG BÁO/LỖI chuẩn — nổi trên cả Printer Setup */
+  .pqbox p.msgtext{color:var(--dim);font-size:clamp(13px,1.15vw,15px);line-height:1.5;max-width:34ch;text-align:center;margin:.1rem 0 0}
   .pqbox{width:min(560px,94vw);border-radius:22px;background:var(--panel);
     border:1px solid var(--line);box-shadow:0 40px 90px rgba(0,0,0,.6),0 0 0 1px rgba(217,180,90,.06) inset;
     padding:clamp(1.6rem,3.4vw,2.6rem);display:flex;flex-direction:column;align-items:center;
@@ -518,6 +525,9 @@
     background:var(--gold-grad);-webkit-background-clip:text;background-clip:text;color:transparent}
   .pqbox .rid{font-family:var(--mono);font-size:clamp(13px,1.2vw,15px);color:var(--gold);
     padding:.4rem 1rem;border:1px solid var(--line);border-radius:999px;letter-spacing:.04em}
+  /* Remove-printer popup: mã máy in KHÔNG khung — chỉ chữ mono trơn, gọn & tinh tế */
+  #prrov .rid{border:none;border-radius:0;padding:.1rem 0;color:var(--gold-hi);
+    font-size:clamp(14px,1.5vw,17px);letter-spacing:.07em}
   .pqbox p{color:var(--dim);font-size:clamp(13px,1.1vw,15px);line-height:1.5}
   .pqbox .row{display:flex;gap:.8rem;width:100%;margin-top:.4rem}
   .pqbox .row button{flex:1;padding:1rem;border-radius:999px;font-size:clamp(14px,1.2vw,16px);
@@ -604,7 +614,7 @@
      PRINTER OVERLAY — full redesign override
      No boxes, no frames. Spacing does the hierarchy.
      ════════════════════════════════════════════════════ */
-  .prnov { background: rgba(4,4,6,.95); backdrop-filter: blur(12px); padding: 0 }
+  .prnov { background: rgba(4,4,6,.97); padding: 0 }  /* bỏ backdrop-filter: nền đục 97% đã che gần hết, blur chỉ tốn GPU re-compute mỗi frame khi cuộn → gây lag list */
   .prnbox {
     border: none !important;
     border-radius: 0 !important;
@@ -678,7 +688,15 @@
     background: rgba(217,180,90,.06) !important;
     border-color: rgba(217,180,90,.4) !important; color: var(--gold) !important;
   }
-  .prnActBtn:disabled { opacity: .35 }
+  .prnActBtn:disabled { opacity: .55 }   /* đang scan: sáng hơn chút để thấy rõ chấm chạy */
+  /* 3 chấm CHẠY SÓNG trái→phải khi đang scan — chỉ chạy lúc scan, xong tự mất
+     (innerHTML bị ghi đè) nên không tốn GPU nền 24/7. */
+  .scandots{display:inline-flex;gap:5px;margin-left:9px;vertical-align:middle}
+  .scandots i{width:5px;height:5px;border-radius:50%;background:var(--gold);
+    opacity:.22;animation:scandot 1.05s ease-in-out infinite}
+  .scandots i:nth-child(2){animation-delay:.16s}
+  .scandots i:nth-child(3){animation-delay:.32s}
+  @keyframes scandot{0%,65%,100%{opacity:.22}28%{opacity:1}}
 
   /* ── Scan results: no border cards ── */
   .prnList { gap: 8px !important }
@@ -942,6 +960,19 @@
     </div>
   </div>
 </div>
+
+<!-- Popup THÔNG BÁO/LỖI chuẩn của service — MỌI lỗi/thông báo (printer setup,
+     pairing, add...) đi qua đây, KHÔNG đổ chữ đỏ thô ra giao diện. -->
+<div class="pqov" id="pmsgov">
+  <div class="pqbox">
+    <div class="ic gold" id="pmsgIc"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M13 14h-2V9h2m0 9h-2v-2h2M1 21h22L12 2z"/></svg></div>
+    <h2 id="pmsgTitle">Notice</h2>
+    <p class="msgtext" id="pmsgText"></p>
+    <div class="row">
+      <button class="yes" id="pmsgOk">OK</button>
+    </div>
+  </div>
+</div>
 <script>
 (function(){
   "use strict";
@@ -1168,10 +1199,18 @@
   // load low. Cards arrive ~every 500ms, so a 500ms poll always lagged ~1 card.
   var pollMs=500, _downCount=0;
   var _arDeadline=0, AUTO_RESET_MS=30000;
+  // Khi ĐANG MỞ Printer Setup / Settings (list cuộn được): đếm 0/412 không đổi nên
+  // poll dày 500ms là vô nghĩa — mà mỗi fetch+render() lại chiếm main-thread một
+  // nhịp, làm cuộn cảm ứng khựng nhẹ theo chu kỳ. Poll thưa hẳn (1500ms) lúc đó →
+  // cuộn mượt. Đóng menu là tự về 500ms.
+  function _scrollOverlayOpen(){
+    return document.querySelector(".prnov.open,.sheet.open")!=null;
+  }
   function poll(){
     fetch("/api/state").then(function(r){return r.json();}).then(function(s){
       if(_downCount>=2){location.reload();return;}  // server just restarted → reload for fresh HTML
-      _downCount=0; pollMs=(s.state==="recording")?100:500; render(s);
+      _downCount=0;
+      pollMs=(s.state==="recording")?100:(_scrollOverlayOpen()?1500:500); render(s);
     }).catch(function(){
       pollMs=500; _downCount++;
       $("sysdown").classList.add("show");  // SYS-01 — backend down
@@ -1386,9 +1425,20 @@
     $("pcfov").addEventListener("click",function(e){ if(e.target===this) this.classList.remove("open"); });
     $("pcfYes").addEventListener("click",function(){ $("pcfov").classList.remove("open"); printRun(_pcfRid,_pcfBtn); });
 
+    // Popup THÔNG BÁO/LỖI chuẩn của service — thay cho chữ đỏ thô.
+    function svcMsg(text,title){
+      $("pmsgTitle").textContent=title||"Something went wrong";
+      $("pmsgText").textContent=text||"";
+      $("pmsgov").classList.add("open");
+    }
+    $("pmsgOk").addEventListener("click",function(){ $("pmsgov").classList.remove("open"); });
+    $("pmsgov").addEventListener("click",function(e){ if(e.target===this) this.classList.remove("open"); });
+
     function msg(txt,cls){
-      var el=$("prnMsg"); el.textContent=txt; el.className="prnMsg"+(cls?" "+cls:"");
-      if(txt&&cls!=="err") setTimeout(function(){if(el.textContent===txt)el.textContent="";},4000);
+      // MỌI lỗi -> popup chuẩn của service (không đổ chữ đỏ thô ra giao diện nữa).
+      if(cls==="err"){ svcMsg(txt); return; }
+      var el=$("prnMsg"); el.textContent=txt||""; el.className="prnMsg"+(cls?" "+cls:"");
+      if(txt) setTimeout(function(){if(el.textContent===txt)el.textContent="";},4000);
     }
 
     // Tab switching (uses data-ptab to avoid conflict with wifi tabs using data-tab)
@@ -1439,7 +1489,7 @@
     // vào list; kết quả rỗng im lặng (yêu cầu 2026-07-03), chỉ lỗi thật qua prnMsg
     $("prnScanWifi").addEventListener("click",function(){
       var btn=this,list=$("prnListWifi");
-      btn.disabled=true; btn.textContent="Scanning…"; list.innerHTML="";
+      btn.disabled=true; btn.innerHTML='Scanning<span class="scandots"><i></i><i></i><i></i></span>'; list.innerHTML="";
       fetch("/api/printer/scan/network").then(function(r){return r.json();}).then(function(d){
         btn.disabled=false; btn.textContent="Scan network";
         if(!d.printers||!d.printers.length) return;
@@ -1455,7 +1505,7 @@
     // (Lọc rác chỉ-hiện-máy-in làm HOÀN TOÀN ở server trong scan_bt — UI y như cũ.)
     $("prnScanBt").addEventListener("click",function(){
       var btn=this,list=$("prnListBt");
-      btn.disabled=true; btn.textContent="Scanning…"; list.innerHTML="";
+      btn.disabled=true; btn.innerHTML='Scanning<span class="scandots"><i></i><i></i><i></i></span>'; list.innerHTML="";
       fetch("/api/printer/scan/bt",{method:"POST"}).then(function(r){return r.json();}).then(function(d){
         btn.disabled=false; btn.textContent="Scan Bluetooth";
         if(!d.devices||!d.devices.length) return;
@@ -1513,7 +1563,6 @@
     }
 
     function addCfg(cfg){
-      msg("Adding…","");
       fetch("/api/printer/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)})
         .then(function(r){return r.json();}).then(function(d){
           if(d.ok){loadPrinterStatus(); openPrn(false);}
