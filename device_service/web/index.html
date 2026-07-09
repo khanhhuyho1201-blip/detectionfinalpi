@@ -135,7 +135,7 @@
   html.kiosk #prnStat,html.kiosk #wifiBtn,html.kiosk .gear{position:relative}
   html.kiosk #prnStat::after,html.kiosk #wifiBtn::after,html.kiosk .gear::after{
     content:"";position:absolute;inset:-14px -8px}
-  /* START blocked (Arduino / WiFi / Server not connected) — looks disabled but taps show why */
+  /* START blocked (Arduino / WiFi / Server chưa kết nối) — MỜ + disabled, không bấm được */
   html.kiosk .btn.blocked{opacity:.42;box-shadow:none;filter:grayscale(.45)}
   html.kiosk .btn.blocked:active{transform:scale(.97)}
   html.kiosk .conn{font-size:clamp(13px,2.8vw,18px);gap:.5rem;letter-spacing:.12em}
@@ -229,7 +229,14 @@
     box-shadow:0 1px 0 rgba(255,255,255,.4) inset,0 -2px 8px rgba(0,0,0,.25) inset,0 14px 30px rgba(217,180,90,.24);transition:transform .12s}
   .btn:active{transform:translateY(1px)}
   .btn:focus-visible{outline:2px solid var(--gold-hi);outline-offset:3px}
-  .btn.ghost{background:transparent;color:var(--red);border:1.5px solid rgba(229,86,91,.55);box-shadow:none}
+  /* STOP — nền ĐỎ CASINO dịu (crimson→wine, không chói như coral --red, không quá đậm),
+     đồng bộ nút vàng START: highlight/inset + glow đỏ nhẹ, chữ kem trắng cho rõ & sang. */
+  .btn.ghost{
+    background:linear-gradient(160deg,#AE3A44 0%,#8E2C38 46%,#6F212C 100%);
+    color:#FCEFE0;border:1px solid rgba(255,255,255,.10);
+    text-shadow:0 1px 1px rgba(60,12,16,.5);
+    box-shadow:0 1px 0 rgba(255,255,255,.16) inset,0 -2px 8px rgba(0,0,0,.28) inset,0 12px 26px rgba(140,35,45,.32)}
+  .btn.ghost:focus-visible{outline:2px solid #E58A90;outline-offset:3px}
   .btn[disabled]{opacity:.5;cursor:default;transform:none}
   .note{font-size:clamp(11px,.95vw,13px);color:var(--dim-2);min-height:1.1em}
   .hint{font-size:clamp(11px,.9vw,13px);color:var(--dim);min-height:1.1em;text-align:center;max-width:340px}
@@ -1114,9 +1121,16 @@
       if(!s.connected) _miss.push("Arduino");
       if(!(s.wifi&&s.wifi.connected)) _miss.push("WiFi");
       if(!s.online) _miss.push("Server");
-      elBtn.className="btn"+(_miss.length?" blocked":"");
-      elBtn.textContent="Start"; elBtn.disabled=false; elBtn.dataset.act="start"; elBtn.dataset.miss=_miss.join(", ");
-      if(_startErr && !_miss.length) _startErr=null;   // reconnected → auto-close the block popup
+      if(!s.printer) _miss.push("Printer");   // bắt buộc có máy in mới cho START
+      // Thiếu bất kỳ tín hiệu nào (chưa set up / rớt kết nối) → START MỜ + KHÓA HẲN
+      // (disabled, không bấm được). Các icon topbar mờ đã cho biết thiếu tín hiệu nào.
+      var _blocked=_miss.length>0;
+      elBtn.className="btn"+(_blocked?" blocked":"");
+      elBtn.textContent="Start";
+      elBtn.disabled=_blocked;
+      elBtn.dataset.act=_blocked?"":"start";
+      elBtn.dataset.miss=_miss.join(", ");
+      if(_startErr && !_blocked) _startErr=null;   // reconnected → auto-close the block popup
     }
     else if(s.state==="checking"||s.state==="warmup"||s.state==="recording"){elBtn.className="btn ghost";elBtn.textContent="Stop";elBtn.disabled=false;elBtn.dataset.act="cancel";}
     else if(s.state==="failed"){var act=ACT[(s.error&&s.error.action)||""];
