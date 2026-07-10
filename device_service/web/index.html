@@ -147,6 +147,18 @@
   html.kiosk .wifiind i:nth-child(3){height:20px}
   html.kiosk .wifiind i:nth-child(4){height:26px}
   html.kiosk .gear:active{color:var(--gold)}
+  /* No tap-delay + no gesture hijack: on the jittery resistive panel a small finger
+     wobble must never turn a TAP into a phantom scroll/zoom that eats the press.
+     'manipulation' keeps list scrolling but drops the 300ms double-tap-zoom wait. */
+  html.kiosk,html.kiosk body,html.kiosk .stage,html.kiosk .btn,html.kiosk .gear,
+  html.kiosk .sr-btn,html.kiosk .run .printbtn,html.kiosk #prnStat,html.kiosk #wifiBtn,
+  html.kiosk .reset,html.kiosk .ghostbtn,html.kiosk .close{touch-action:manipulation}
+  html.kiosk body,html.kiosk .stage{overscroll-behavior:none}
+  /* Clear "your touch landed" feedback — brighten + press-scale so it reads even
+     when the finger contact is small/jittery on the 3.5" panel. */
+  html.kiosk .btn:active,html.kiosk .sr-btn:active,html.kiosk .gear:active,
+  html.kiosk .run .printbtn:active,html.kiosk .reset:active,html.kiosk .ghostbtn:active{
+    filter:brightness(1.18)}
   /* ═══ TOUCH POLISH (3.5" kiosk): tactile press + comfortable targets + readable type ═══ */
   html.kiosk .btn,html.kiosk .sr-btn,html.kiosk .prnActBtn,html.kiosk .prnTab,
   html.kiosk .prnAddBtn,html.kiosk .prnPairBtn,html.kiosk .run .printbtn,
@@ -468,13 +480,20 @@
     /* tap targets bumped 2026-07-08 (user: 3.5" too small): X/Setup/Print bigger + wider.
        Printer/WiFi rows then trimmed slightly so 3 recent runs fit WITHOUT scrolling. */
     /* X đưa LÊN ngang chữ "Settings" (padding-top nhỏ) + vùng chạm to kéo xuống dưới (padding-bottom lớn) → dễ bấm */
-    html.kiosk .close{font-size:2rem;padding:2px 12px 24px;top:2px;right:4px;line-height:1}
+    /* X đóng Settings — DỜI LÊN ngang hàng chữ "Settings" (top:3), thu chiều cao 46px
+       để KHÔNG chạm khung RECENT RUNS bên dưới; giữ chữ X to (2.4rem) + bề NGANG rộng
+       72px để vẫn dễ chạm trên màn nhỏ. */
+    html.kiosk .close{font-size:2.4rem;top:3px;right:6px;padding:0;line-height:1;min-width:72px;min-height:46px;display:inline-flex;align-items:center;justify-content:center}
     html.kiosk .sr-label{font-size:12.5px}
     html.kiosk .setrow{min-height:46px;gap:.5rem;padding:.12rem 0}
     html.kiosk .sr-dot{width:.45rem;height:.45rem}
     html.kiosk .sr-btn{min-height:44px;font-size:13px;padding:.55rem 1rem;border-radius:9px}  /* Setup ≥44px */
     html.kiosk #prnSetupBtn,html.kiosk #wifiSetupBtn{width:7.5em}
     html.kiosk .shdiv{margin:.08rem 0}
+    /* 3 recent-runs hiện THẲNG hết, KHÔNG cuộn riêng: khung .runs tự giãn theo nội
+       dung (JS chỉ render tối đa 3 run) thay vì bị ép vào khoảng giữa rồi cuộn.
+       Drawer (.sheet) vẫn cuộn được để tới Printer/WiFi — nhưng 3 run luôn thấy ở trên. */
+    html.kiosk .runs{flex:0 0 auto;overflow:visible;gap:.3rem}
     html.kiosk .run{min-height:46px;padding:.5rem .65rem}
     html.kiosk .run .id{font-size:11px}
     html.kiosk .run .tag{font-size:10.5px}
@@ -484,7 +503,8 @@
     /* Printer Setup overlay */
     html.kiosk .prnbox{padding:14px 16px 16px;gap:10px;border-radius:16px}
     html.kiosk .prnbox h3{font-size:1.3rem}
-    html.kiosk .prnox{font-size:1.9rem;padding:12px;top:0;right:0}
+    /* X đóng Printer Setup — cùng cỡ hộp chạm 68×68px + chữ X to, căn giữa */
+    html.kiosk .prnox{font-size:3rem;padding:0;top:0;right:0;line-height:1;min-width:68px;min-height:68px;display:inline-flex;align-items:center;justify-content:center}
     html.kiosk .prn-status .sr-label{font-size:13px}
     html.kiosk .prn-status .sr-btn{min-height:44px;font-size:12px;padding:.55rem .95rem}  /* Change/Remove ≥44px */
     html.kiosk .prnTab{padding:.6rem .3rem;font-size:14px}
@@ -1220,19 +1240,24 @@
   function _scrollOverlayOpen(){
     return document.querySelector(".prnov.open,.sheet.open")!=null;
   }
+  var _pollTimer=null;
   function poll(){
+    if(_pollTimer){clearTimeout(_pollTimer);_pollTimer=null;}
     fetch("/api/state").then(function(r){return r.json();}).then(function(s){
       if(_downCount>=2){location.reload();return;}  // server just restarted → reload for fresh HTML
       _downCount=0;
-      pollMs=(s.state==="recording")?100:(_scrollOverlayOpen()?1500:500); render(s);
+      pollMs=(s.state==="recording")?100:(_scrollOverlayOpen()?1500:300); render(s);
     }).catch(function(){
       pollMs=500; _downCount++;
       $("sysdown").classList.add("show");  // SYS-01 — backend down
       elConn.className="statico off"; if(elPrn) elPrn.className="statico off";
       // keep watchdog alive — renderer is healthy, only the server is down/restarting
       if(_downCount>=2) fetch("/api/heartbeat",{method:"POST"}).catch(function(){});
-    }).finally(function(){setTimeout(poll,pollMs);});
+    }).finally(function(){_pollTimer=setTimeout(poll,pollMs);});
   }
+  // Re-poll IMMEDIATELY (called right after a tap action) so the new state shows in a
+  // few ms instead of waiting up to a whole poll interval → taps feel real-time.
+  function pollNow(){ if(_pollTimer){clearTimeout(_pollTimer);_pollTimer=null;} poll(); }
   poll();
 
   // the single main button carries whatever action the current state needs
@@ -1240,11 +1265,11 @@
     _arDeadline=0;
     if(a==="start"){                                       // start mẻ mới (từ 0)
       if(elBtn.dataset.miss){ _startErr=elBtn.dataset.miss; showBlockErr(); return; }  // chặn khi thiếu kết nối
-      post("/api/start");
+      post("/api/start").finally(pollNow);
     }
-    else if(a==="dismiss")post("/api/dismiss");            // lỗi -> về Ready (sắp bài rồi mới START)
-    else if(a==="cancel")post("/api/cancel");              // cancel
-    else if(a==="resend")post("/api/retry");               // resend
+    else if(a==="dismiss")post("/api/dismiss").finally(pollNow);   // lỗi -> về Ready (sắp bài rồi mới START)
+    else if(a==="cancel")post("/api/cancel").finally(pollNow);     // cancel
+    else if(a==="resend")post("/api/retry").finally(pollNow);      // resend
     else if(a==="enroll")openS(true);
     else if(a==="reset")openS(true);
     else if(a==="__closeErr"){ _startErr=null; $("errov").classList.remove("open"); }

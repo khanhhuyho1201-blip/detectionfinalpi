@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ln -sf .venv venv)",
+      "Bash(./.venv/bin/pip install *)",
+      "Bash(./.venv/bin/python -c \"import flask, serial, requests, PIL, qrcode; print\\('OK, đủ thư viện'\\)\")",
+      "Read(//home/bbsw/.config/systemd/user/**)",
+      "Bash(systemctl --user status card-device.service --no-pager)",
+      "Read(//dev/**)",
+      "Bash(command -v chromium chromium-browser wlr-randr ffmpeg)",
+      "Bash(mkdir -p ~/.config/systemd/user)",
+      "Bash(cp /home/bbsw/workspace/deploy/card-device.service ~/.config/systemd/user/card-device.service)",
+      "Bash(systemctl --user daemon-reload)",
+      "Bash(systemctl --user enable --now card-device.service)",
+      "Bash(echo \"=== EXIT $? ===\")",
+      "Bash(curl -sf --max-time 3 http://127.0.0.1:8800/api/state)",
+      "Bash(systemctl --user is-active card-device.service)"
+    ]
+  }
+}

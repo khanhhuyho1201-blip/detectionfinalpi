@@ -1,0 +1,80 @@
+bbsw@bbswcmd:~ $ xinput _calibrator
+usage:
+	xinput get-feedbacks <device name>
+	xinput set-ptr-feedback <device name> <threshold> <num> <denom>
+	xinput set-integer-feedback <device name> <feedback id> <value>
+	xinput get-button-map <device name>
+	xinput set-button-map <device name> <map button 1> [<map button 2> [...]]
+	xinput set-pointer <device name> [<x index> <y index>]
+	xinput set-mode <device name> ABSOLUTE|RELATIVE
+	xinput list [--short || --long || --name-only || --id-only] [<device name>...]
+	xinput query-state <device name>
+	xinput test [-proximity] <device name>
+	xinput create-master <id> [<sendCore (dflt:1)>] [<enable (dflt:1)>]
+	xinput remove-master <id> [Floating|AttachToMaster (dflt:Floating)] [<returnPointer>] [<returnKeyboard>]
+	xinput reattach <id> <master>
+	xinput float <id>
+	xinput set-cp <window> <device>
+	xinput test-xi2 [--root] <device>
+	xinput map-to-output <device> <output name>|all
+	xinput list-props <device> [<device> ...]
+	xinput set-int-prop <device> <property> <format (8, 16, 32)> <val> [<val> ...]
+	xinput set-float-prop <device> <property> <val> [<val> ...]
+	xinput set-atom-prop <device> <property> <val> [<val> ...]
+	xinput watch-props <device>
+	xinput delete-prop <device> <property>
+	xinput set-prop <device> [--type=atom|float|int] [--format=8|16|32] <property> <val> [<val> ...]
+	xinput disable <device>
+	xinput enable <device>
+bbsw@bbswcmd:~ $ 
+
+
+xinput_calibrator
+
+bbsw@bbswcmd:~ $ xinput_calibrator
+Calibrating EVDEV driver for "ADS7846 Touchscreen" id=6
+	current calibration values (from XInput): min_x=3936, max_x=227 and min_y=268, max_y=3880
+INFO: width=480, height=320
+bbsw@bbswcmd:~ $ 
+
+
+xinput_calibrator --no-timeout --output-type xorg.conf.d
+
+sudo dpkg -i -B xinput-calibrator_0.7.5-1_armhf.deb
+
+DISPLAY=:0.0 xinput_calibrator
+xinput_calibrator --verbose --no-timeout
+
+sudo mkdir -p /etc/X11/xorg.conf.d
+sudo nano /etc/X11/xorg.conf.d/99-calibration.conf
+
+
+
+
+
+
+sw@bbswcmd:~ $ cd LCD-show/
+bbsw@bbswcmd:~/LCD-show $ sudo dpkg -i -B xinput-calibrator_0.7.5-1_armhf.deb
+dpkg: warning: downgrading xinput-calibrator (0.8.0-1) to (0.7.5+git20140201-1)
+(Reading database ... 121506 files and directories currently installed.)
+Preparing to unpack xinput-calibrator_0.7.5-1_armhf.deb ...
+Unpacking xinput-calibrator:armhf (0.7.5+git20140201-1) over (0.8.0-1) ...
+Setting up xinput-calibrator:armhf (0.7.5+git20140201-1) ...
+Processing triggers for man-db (2.13.1-1) ...
+Processing triggers for mailcap (3.74) ...
+Processing triggers for desktop-file-utils (0.28-1) ...
+bbsw@bbswcmd:~/LCD-show $ DISPLAY=:0.0 xinput_calibrator
+xinput_calibrator: error while loading shared libraries: libXi.so.6: ELF load command address/offset not page-aligned
+bbsw@bbswcmd:~/LCD-show $ xinput_calibrator --no-timeout --output-type xorg.conf.d
+xinput_calibrator: error while loading shared libraries: libXi.so.6: ELF load command address/offset not page-aligned
+bbsw@bbswcmd:~/LCD-show $ sudo mkdir -p /etc/X11/xorg.conf.d
+bbsw@bbswcmd:~/LCD-show $ sudo nano /etc/X11/xorg.conf.d/99-calibration.conf
+bbsw@bbswcmd:~/LCD-show $ 
+
+
+
+
+
+sudo evtest /dev/input/event5
+
+sudo DISPLAY=:0 XAUTHORITY=/tmp/serverauth.GTEHClRkLp xinput_calibrator --no-timeout

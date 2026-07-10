@@ -48,6 +48,30 @@ def ensure_tmp():
     os.makedirs(TMP_DIR, exist_ok=True)
 
 
+def _fsync_file(path: str) -> None:
+    """Flush a file's data to stable storage (power-loss durability)."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
+
+
+def _fsync_dir(path: str) -> None:
+    """Flush a directory entry (so a rename is durable across power loss)."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
+
+
 def probe(timeout: float = 5.0) -> tuple[bool, str]:
     """Lightweight camera-connection check (does NOT start recording).
 
@@ -91,7 +115,12 @@ class Recorder:
     def __init__(self, run_id: str):
         ensure_tmp()
         self.run_id = run_id
+        # Record to a *.mp4.part sidecar; atomically rename to the final *.mp4 only
+        # after a clean stop (moov flushed). A power cut mid-recording can then only
+        # ever leave a *.mp4.part (ignored + cleaned on boot), NEVER a truncated
+        # *.mp4 that _scan_pending would upload as if valid (BA_kiosk_and_video_power_loss.md R1).
         self.output_path = os.path.join(TMP_DIR, f"{run_id}.mp4")
+        self.part_path = self.output_path + ".part"
         self._proc: subprocess.Popen | None = None
         self._reader: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -145,7 +174,9 @@ class Recorder:
             "-map", "0:v", "-c:v", "libx264",
             "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "24",
             "-pix_fmt", "yuv420p",
-            self.output_path,
+            # force the mp4 muxer: the output ends in ".part" so ffmpeg can't infer
+            # the container from the extension.
+            "-f", "mp4", self.part_path,
             # output 2: live preview frames as MJPEG on stdout
             "-map", "0:v", "-vf", f"scale={PREVIEW_W}:{PREVIEW_H}",
             "-q:v", "7", "-f", "mjpeg", "pipe:1",
@@ -193,7 +224,8 @@ class Recorder:
         """Fake recorder: create a placeholder MP4 immediately, emit a black JPEG frame."""
         ensure_tmp()
         # Write a non-empty placeholder file (valid enough for os.path.getsize checks)
-        with open(self.output_path, "wb") as fh:
+        # to the .part sidecar — stop_and_keep() renames it to the final .mp4.
+        with open(self.part_path, "wb") as fh:
             fh.write(b"\x00" * 1024)   # 1 KB placeholder
         with self._lock:
             self._latest_jpeg = self._BLACK_JPEG
@@ -267,21 +299,38 @@ class Recorder:
         return rc
 
     def stop_and_keep(self) -> str | None:
-        """Finish recording, keep the file. Returns path or None on failure."""
+        """Finish recording; atomically publish the .part file as the final .mp4.
+
+        The .mp4 only ever appears AFTER a clean stop + fsync + rename, so its mere
+        existence is a power-safe "fully saved on the Pi" marker. Returns the final
+        path, or None on failure.
+        """
         self._stop_proc()
-        if not os.path.exists(self.output_path):
-            logger.error("Recording stopped but output file is missing/empty")
+        if not os.path.exists(self.part_path):
+            logger.error("Recording stopped but .part file is missing")
             return None
-        size = os.path.getsize(self.output_path)
+        size = os.path.getsize(self.part_path)
         if size == 0:
-            logger.error("Recording stopped but output file is missing/empty")
+            logger.error("Recording stopped but .part file is empty")
+            delete_video(self.part_path)
             return None
+        # durably publish: fsync data → atomic rename → fsync dir (so the rename
+        # itself survives a power cut). After this, a power loss can no longer
+        # leave a half-written .mp4.
+        _fsync_file(self.part_path)
+        try:
+            os.replace(self.part_path, self.output_path)
+        except Exception as e:
+            logger.error(f"Could not publish recording {self.part_path} -> {self.output_path}: {e}")
+            return None
+        _fsync_dir(os.path.dirname(self.output_path) or ".")
         logger.info(f"Recording kept: {self.output_path} ({size} bytes)")
         return self.output_path
 
     def stop_and_discard(self) -> None:
-        """Cancel recording and delete the file."""
+        """Cancel recording and delete any partial/final file."""
         self._stop_proc()
+        delete_video(self.part_path)
         delete_video(self.output_path)
         logger.info("Recording discarded")
 

@@ -123,6 +123,12 @@ class _FakeClient:
     def complete_upload(self, run_id, key): return {"ok": True}
     def cancel_run(self, run_id): return {"ok": True}
     def cancel_own_run(self, run_id): return {"ok": True}
+
+    def get_run_status(self, run_id):
+        # bench: CARD_FAKE_RUN_STATUS lets R2 tests simulate the server ALREADY
+        # having this run (uploaded/processing/done) vs not (recording).
+        return {"run_id": run_id, "status": os.getenv("CARD_FAKE_RUN_STATUS", "recording")}
+
     _flow_i = 0
 
     def list_runs(self):
@@ -648,6 +654,20 @@ class Controller:
 
     # ── SYS-04: pending video from a previous (interrupted) run ──
     def _scan_pending(self):
+        # Clean stray *.mp4.part = a recording interrupted by a power cut / crash
+        # mid-capture (never cleanly published). It has no moov atom → NOT uploadable;
+        # the batch's cards already fell into the tray, so the operator re-runs. Never
+        # let one masquerade as a complete pending video. ("*.mp4" glob below already
+        # excludes ".part", so a valid video is never touched here.)
+        try:
+            for part in glob.glob(os.path.join(TMP_DIR, "*.mp4.part")):
+                try:
+                    os.remove(part)
+                    logger.info("SYS-04: dọn video quay dở (mất điện/khởi động lại giữa mẻ): %s", part)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         try:
             vids = sorted(glob.glob(os.path.join(TMP_DIR, "*.mp4")), key=os.path.getmtime)
         except Exception:
@@ -1182,12 +1202,49 @@ class Controller:
             self._can_start = True
             return True
 
+    def _reconcile_pending(self, run_id) -> bool:
+        """R2 (BA_kiosk_and_video_power_loss.md): the server is the source of truth,
+        keyed by run_id. Before re-uploading a pending video, ask the server whether
+        it ALREADY has it — a power cut AFTER the server received the clip but BEFORE
+        the local file was deleted would otherwise re-send the whole 412-card video
+        (and risk a duplicate on a non-idempotent backend).
+
+        Returns True ONLY when the server POSITIVELY confirms it has the run
+        (uploaded/processing/done) → caller discards the local file, no re-upload.
+        Any doubt (recording, unknown status, missing endpoint, network error) →
+        False → re-upload as normal; the upload path still discards a truly-gone run
+        via its 4xx ('gone') handling, so we never wrongly delete an un-sent video."""
+        if not self._client or not hasattr(self._client, "get_run_status"):
+            return False
+        try:
+            st = self._client.get_run_status(run_id)
+        except Exception as e:
+            logger.debug("reconcile get_run_status(%s) failed: %s", run_id, e)
+            return False
+        status = str((st or {}).get("status", "")).lower()
+        if status in ("uploaded", "processing", "done"):
+            logger.info("R2: server already has run %s (%s) → discard local, skip re-upload",
+                        run_id, status)
+            return True
+        return False
+
     def retry(self):
         if not self._pending_upload or self._recording:
             return False
         run_id, video_path = self._pending_upload
         self._set(state="uploading")
         def th():
+            # R2: don't re-upload a video the server already has (power cut after
+            # the server committed it, before the local delete). Adopt it as done.
+            if self._reconcile_pending(run_id):
+                with self._lock:
+                    delete_video(video_path); self._pending_upload = None
+                    self._can_start = True; self._error = None; self._state = "done"
+                    self._run_id = run_id
+                    self._await_result = run_id      # lock Start: wait for AI + QR ack
+                    self._await_since = time.monotonic()
+                self._auto_idle_after(run_id)
+                return
             res = self._upload_with_retry(run_id, video_path)
             with self._lock:
                 if res == "ok":
