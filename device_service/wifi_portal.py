@@ -627,6 +627,14 @@ def _build_page() -> str:
 # ── Flask routes ──────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
+    # A phone opening the portal fresh must not see a stale result from a
+    # previous session (state stays 'ok'/'error' forever otherwise). Reset
+    # terminal states to idle; NEVER touch 'connecting' — first phone to hit
+    # Connect keeps the lock ("first one wins"), others still get busy.
+    with _conn_lock:
+        if _conn["state"] in ("ok", "error"):
+            _conn["state"] = "idle"
+            _conn["error"] = None
     return _build_page()
 
 

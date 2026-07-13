@@ -1,0 +1,17 @@
+[Unit]
+Description=ADS7846 Userspace Touch Driver (Waveshare 3.5C, polling mode)
+After=multi-user.target
+# Chạy sau khi SPI/overlay đã sẵn sàng
+
+[Service]
+Type=simple
+# Nạp cấu hình hướng/hiệu chỉnh từ file env (sửa file này để chỉnh, không cần sửa code)
+EnvironmentFile=/home/bbsw/ads7846-userspace/touch.env
+ExecStart=/home/bbsw/ads7846-userspace/run-touch.sh
+Restart=always
+RestartSec=3
+# Cần quyền root để bind spidev + mở /dev/uinput
+User=root
+
+[Install]
+WantedBy=multi-user.target

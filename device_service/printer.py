@@ -37,7 +37,7 @@ FAKE_PRINTER = settings.fake.printer
 
 
 _FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-_TEST_TEXT = "Hồ Duy Trường đẹp trai, EM YÊU ANH"
+_TEST_TEXT = "Card Feeder — Test Print OK"
 
 
 def _text_image(text: str):

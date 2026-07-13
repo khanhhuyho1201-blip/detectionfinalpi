@@ -79,13 +79,13 @@ def probe(timeout: float = 5.0) -> tuple[bool, str]:
     (ok, message). Used by the pre-flight check sequence.
     """
     if FAKE_CAMERA == "notfound":
-        return False, f"Không thấy {VIDEO_DEVICE}"
+        return False, f"{VIDEO_DEVICE} not found"
     if FAKE_CAMERA == "busy":
-        return False, f"{VIDEO_DEVICE} không phản hồi v4l2"
+        return False, f"{VIDEO_DEVICE} not responding to v4l2"
     if FAKE_CAMERA == "ok":
         return True, f"{VIDEO_DEVICE} (simulated)"
     if not os.path.exists(VIDEO_DEVICE):
-        return False, f"Không thấy {VIDEO_DEVICE}"
+        return False, f"{VIDEO_DEVICE} not found"
     try:
         r = subprocess.run(
             ["v4l2-ctl", "--device", VIDEO_DEVICE, "--list-formats"],
@@ -93,11 +93,11 @@ def probe(timeout: float = 5.0) -> tuple[bool, str]:
         )
     except FileNotFoundError:
         logger.info("v4l2-ctl không có — bỏ qua kiểm tra định dạng (CAM-07)")
-        return True, f"{VIDEO_DEVICE} (chưa kiểm định dạng)"
+        return True, f"{VIDEO_DEVICE} (format check skipped)"
     except Exception as e:
         return False, str(e)[:60]
     if r.returncode != 0:
-        return False, f"{VIDEO_DEVICE} không phản hồi v4l2"
+        return False, f"{VIDEO_DEVICE} not responding to v4l2"
     return True, VIDEO_DEVICE
 
 

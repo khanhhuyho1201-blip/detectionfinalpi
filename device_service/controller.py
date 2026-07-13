@@ -93,7 +93,7 @@ class _FakeClient:
         if fail == "reject":
             return {"ok": False, "reason": settings.fake.srv_reason}
         if settings.fake.reject:   # bench: test SRV-03
-            return {"ok": False, "reason": "hết hạn mức thiết bị"}
+            return {"ok": False, "reason": "device quota exceeded"}
         # bench: simulate an orphaned recording run blocking start. "always" never
         # frees (-> SRV-07); an integer N frees after N rejections (-> self-heal).
         rr = settings.fake.recording_run
@@ -910,7 +910,7 @@ class Controller:
                 if self._cancel_evt.is_set():
                     return
                 low = (msg or "").lower()
-                code = "CAM-01" if ("không thấy" in low or "không tìm" in low or "not found" in low) else "CAM-02"
+                code = "CAM-01" if "not found" in low else "CAM-02"
                 return self._abort(errors.err(code), run_id)
             if self._cancel_evt.is_set():
                 return
@@ -1329,7 +1329,7 @@ class Controller:
 
     def enroll(self, server_url, device_id, setup_token):
         if not (server_url and device_id and setup_token):
-            return {"ok": False, "error": "Thiếu thông tin kích hoạt"}
+            return {"ok": False, "error": "Missing activation info"}
         try:
             data = APIClient.enroll(server_url, device_id, setup_token)
             creds = {"server_url": server_url,

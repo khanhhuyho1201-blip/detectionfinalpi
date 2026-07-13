@@ -36,9 +36,8 @@
       radial-gradient(140% 120% at 50% 120%, rgba(28,25,34,.85), transparent 60%),
       linear-gradient(180deg,#0C0B0F,#08080A);
     isolation:isolate}
-  .stage::before{content:"\2660"; position:absolute; left:-3vw; bottom:-10vh;
-    font-family:var(--serif); font-size:48vh; line-height:1; color:rgba(217,180,90,.03);
-    z-index:0; pointer-events:none}
+  /* logo lá bài ♠ góc dưới-trái: đã bỏ theo yêu cầu */
+  .stage::before{content:none}
 
   .topbar{flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
     padding:10px clamp(20px,3.4vw,40px); z-index:3; height:52px}
@@ -816,7 +815,7 @@
     <div class="devinfo" id="devInfo" style="display:none">
       <div class="lbl" style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:0">
         <span>Device</span>
-        <b id="devId" style="font-family:var(--mono);font-weight:400;font-size:11px;letter-spacing:0;text-transform:none;color:var(--text);word-break:break-all;user-select:all;cursor:text;white-space:normal;text-align:right" title="Click để chọn toàn bộ"></b>
+        <b id="devId" style="font-family:var(--mono);font-weight:400;font-size:11px;letter-spacing:0;text-transform:none;color:var(--text);word-break:break-all;user-select:all;cursor:text;white-space:normal;text-align:right" title="Click to select all"></b>
       </div>
     </div>
 

@@ -569,7 +569,7 @@ def get_status() -> dict:
 
 # ── Test print ────────────────────────────────────────────────────────────────
 
-_TEST_LINE = "Hồ Duy Trường đẹp trai, EM YÊU ANH"
+_TEST_LINE = "Card Feeder — Test Print OK"
 
 
 def test_print() -> dict:
