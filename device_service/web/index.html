@@ -127,10 +127,9 @@
   html.kiosk .gear .gsym{width:1.62rem;height:1.62rem;display:block;position:relative;top:4px}  /* gear fills its box more → shrink; +4px nudges the <button> glyph down to the <div> icons' baseline */
   html.kiosk .statico svg,html.kiosk .gear .gsym{filter:drop-shadow(0 0 5px currentColor)}
   html.kiosk .statico.off svg{filter:none;opacity:.9}  /* unlit sign: no glow */
-  /* server icon while un-connected → tappable, pulses gold to invite the tap */
-  .statico.needenroll{color:var(--gold)!important;cursor:pointer;animation:enrollpulse 1.4s ease-in-out infinite}
-  .statico.needenroll svg{filter:drop-shadow(0 0 6px var(--gold))!important;opacity:1!important}
-  @keyframes enrollpulse{0%,100%{opacity:1}50%{opacity:.5}}
+  /* server icon: NOT connected → just DIM (static, no blink), like the printer/
+     wifi off-icons. Still tappable when it needs enrolling (opens the QR popup). */
+  .statico.needenroll{cursor:pointer}
   html.kiosk .gear{color:var(--gold)}
   html.kiosk #prnStat,html.kiosk #wifiBtn{cursor:pointer}
   /* 3.5" panel: invisible hit-pad around the TAPPABLE icons (printer/wifi/gear) — bigger touch
@@ -377,7 +376,8 @@
   .prnPairBtn{padding:.42rem .9rem;border-radius:9px;border:1px solid var(--blue);
     background:rgba(122,160,238,.08);color:var(--blue);font-size:14px;font-weight:600;cursor:pointer;font-family:var(--sans);flex-shrink:0;transition:background .15s}
   .prnPairBtn:hover{background:rgba(122,160,238,.2)}
-  /* manual entry — (ô nhập IP đã gỡ khỏi UI theo yêu cầu; BE /api/printer/manual vẫn còn) */
+  /* manual entry — nhập IP tay */
+  /* (ô nhập IP đã gỡ khỏi UI; BE /api/printer/manual vẫn còn) */
   /* message */
   .prnMsg{font-size:13px;color:var(--dim);min-height:1rem;text-align:center;padding:.1rem 0}
   .prnMsg.ok{color:var(--green)} .prnMsg.err{color:var(--red)}
@@ -477,7 +477,6 @@
     /* Settings drawer: much smaller so it looks right on 480x320 */
     html.kiosk .sheet{width:min(360px,86vw);padding:8px 14px 8px;gap:.14rem}
     html.kiosk .sheet h3{font-size:1.05rem;margin-bottom:0}
-    html.kiosk #quitBtn{font-size:9px !important;padding:.18rem .55rem !important}
     html.kiosk .sheet .lbl{font-size:9px;letter-spacing:.14em;margin-bottom:0}
     /* Icon topbar BẤM ĐƯỢC (gear/wifi/printer): nới HIT-AREA ~46px, glyph giữ nguyên
        (ardStat/conn chỉ là đèn báo nhưng to đều cho cân đối, bấm vô hại). */
@@ -826,7 +825,7 @@
   <div class="scrim" id="scrim"></div>
   <aside class="sheet" id="sheet">
     <button class="close" id="close">&times;</button>
-    <h3>Settings <button id="quitBtn" style="padding:.18rem .6rem;border-radius:7px;border:1px solid rgba(229,86,91,.35);background:transparent;color:rgba(229,86,91,.55);font-size:10px;letter-spacing:.03em;cursor:pointer;transition:all .2s;vertical-align:middle;margin-left:6px">Quit</button></h3>
+    <h3>Settings</h3>
 
     <div class="devinfo" id="devInfo" style="display:none">
       <div class="lbl" style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:0">
@@ -1446,30 +1445,7 @@
     },true);
   })();
 
-  // ── Nút "Tắt app" trong Settings: bấm 1 lần xác nhận, bấm 2 trong 3s → quit ──
-  (function(){
-    var btn=document.getElementById("quitBtn");
-    if(!btn) return;
-    var armed=false, timer=null;
-    function disarm(){
-      armed=false; btn._armed=false;
-      btn.textContent="Quit";
-      btn.style.cssText="padding:.3rem .9rem;border-radius:8px;border:1px solid rgba(229,86,91,.35);background:transparent;color:rgba(229,86,91,.6);font-size:11px;letter-spacing:.04em;cursor:pointer;transition:all .2s";
-    }
-    btn.addEventListener("click",function(){
-      if(!armed){
-        armed=true; btn._armed=true;
-        btn.textContent="Tap again to confirm";
-        btn.style.borderColor="rgba(229,86,91,.9)";
-        btn.style.color="#F05252";
-        btn.style.background="rgba(229,86,91,.08)";
-        timer=setTimeout(disarm,3000);
-      } else {
-        clearTimeout(timer);
-        fetch("/api/quit",{method:"POST"}).catch(function(){});
-      }
-    });
-  })();
+  // (Nút "Quit" trong Settings đã gỡ theo yêu cầu. /api/quit + Alt+F4 vẫn còn ở BE.)
 
   // ── WiFi setup overlay (QR + instructions for the buyer) ──
   // QR theo CHUẨN WIFI: quét là điện thoại TỰ NỐI vào AP của máy (không phải gõ
