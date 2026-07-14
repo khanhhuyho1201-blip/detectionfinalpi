@@ -105,15 +105,17 @@ const uint16_t STEPS_PER_LOWER_DEF = 80;   // bước hạ/10 lá MẶC ĐỊNH 
 const uint16_t MAX_LOWER_STEPS    = (uint16_t)(TRAVEL_MM * STEPS_PER_REV / LEAD_MM + 0.5f);
 const uint16_t STEP_PULSE_HIGH_US = 5;
 const uint16_t STEP_DELAY_RUN_US  = 900;    // tốc độ HẠ (cruise)
-const uint16_t STEP_DELAY_HOME_US = 8000;   // tốc HOME (us/full-step-eq) — v5.3: CHỐT 8000 (anh test: nhanh + êm + về đủ đỉnh)
-                                            //   (microstep nên KHÔNG kẹt cộng hưởng dù đổi tốc). v28.2: đổi tốc = sửa hằng số này
-                                            //   rồi nạp lại (lệnh H giờ = CHẠY home, không còn là chỉnh tốc).
+const uint16_t STEP_DELAY_HOME_US = 2000;   // tốc HOME (us/full-step-eq) — v29: 8000->2000 (4x nhanh, ~20mm/s,
+                                            //   15cm ~7.5s thay vi ~30s; yeu cau anh 2026-07-14 "nhanh thiet nhanh").
+                                            //   AN TOAN: home la vong KIN (chay toi khi CHAM cong tac + hitStop verify)
+                                            //   -> lo truot buoc chi cham hon, KHONG sai vi tri. Neu stall that ->
+                                            //   HWF_HOME latch bao ngay. (microstep nen khong ket cong huong).
 
 // --- CHỐNG RUNG / GIẢM ỒN: gia tốc & GIẢM tốc (ramp 2 đầu) ---
 const uint16_t STEP_START_RUN_US     = 2500;  // ramp-start khi HẠ
 const uint16_t STEP_START_HOME_US    = 16000; // ramp-start khi HOME — TRỞ VỀ cũ (v5.0: 22000->16000)
 const uint8_t  STEP_RAMP_STEPS       = 6;     // số bước ramp khi HẠ
-const uint8_t  STEP_RAMP_STEPS_HOME  = 40;    // số bước ramp khi HOME — TRỞ VỀ cũ (v5.0: 100->40)
+const uint8_t  STEP_RAMP_STEPS_HOME  = 100;   // số bước ramp khi HOME — v29: 40->100 (tăng tốc 4x cần ramp dài hơn cho êm, chống stall lúc đề-pa)
 uint16_t       homeDelayUs           = STEP_DELAY_HOME_US;  // tốc HOME hiện hành (us/bước) — v28.2: cố định theo hằng số trên
 
 // --- Sensor ---
@@ -309,8 +311,13 @@ MachineState machineState = IDLE;
 //   err = lastErr    : NONE | CLUMP | STALL | LIMIT  (CLUMP suy ra real-time từ sClumpLive khi RUN)
 enum RunStatus { RS_IDLE, RS_RUN, RS_OFF, RS_DONE, RS_ERROR };
 RunStatus runStatus = RS_IDLE;
-enum ErrFlag   { EF_NONE, EF_CLUMP, EF_STALL, EF_LIMIT, EF_NOMOTOR, EF_NOHOME, EF_LINK };  // v28.2 NOHOME=B1 chua home | v28.3 LINK=mat lien lac Pi khi dang chay
+enum ErrFlag   { EF_NONE, EF_CLUMP, EF_STALL, EF_LIMIT, EF_NOMOTOR, EF_NOHOME, EF_LINK, EF_SENSOR };  // v28.2 NOHOME | v28.3 LINK | v29 SENSOR=chua nhan duoc la nao (cam bien D4 / khay bai)
 ErrFlag   lastErr   = EF_NONE;     // lý do dừng gần nhất (latch cho st=ERROR/DONE/OFF)
+// ===== v29 HW-FAULT LATCH (0 = tat ca khoe). CHI xoa khi HOME chuan (returnStepperHomeBlocking cham cong tac) hoac power-cycle. =====
+enum HwFaultBits { HWF_SENSOR = 0x01,   // cam bien D4 chet/tuot day HOAC het la ngay tu dau (cardCount==0 sau GAP_STALL_START)
+                   HWF_DRIVE  = 0x02,   // DC motor mat dien HOAC encoder D2/D3 mat tin hieu (EF_NOMOTOR)
+                   HWF_HOME   = 0x04 }; // stepper HOAC cong tac top D7 HOAC ket co khi (home het hanh trinh khong cham)
+uint8_t   hwFault  = 0;            // v29: bitmask latch phan cung -> Pi doc "hw=" de lam mo icon + chan START
 uint32_t  lastStMs  = 0;           // mốc phát dòng ST định kỳ (~250ms khi RUN)
 // v28.3 DEADMAN: mốc NHẬN byte cuối từ Pi. Đang CHẠY mà Pi im lặng quá LINK_DEADMAN_MS
 //   (Pi treo / rớt USB / MẤT ĐIỆN Pi trong khi rail 12V vẫn nuôi ATmega) -> DỪNG MOTOR NGAY.
@@ -1024,8 +1031,13 @@ void returnStepperHomeBlocking()
     //   cơ khí lắng 50ms (bước cuối còn rung -> đọc ngay dễ false-negative). Không chạm thật
     //   = hết dự phòng vẫn chưa tới -> công tắc hỏng / dây đứt / kẹt -> vị trí 0 KHÔNG tin được.
     delay(50); wdt_reset();
-    if (hitStop || limitHit()) Serial.println(F("[HOME] Done — DANG CHAM cong tac top (home CHUAN)"));
-    else                       Serial.println(F("[HOME] !! Done NHUNG KHONG cham cong tac top — KIEM TRA cong tac/day D7 / ket co khi. Vi tri co the SAI."));
+    if (hitStop || limitHit()) {
+        hwFault = 0;                                       // v29: home CHUAN -> XOA moi latch loi phan cung (user da co co hoi sua + re-arm)
+        Serial.println(F("[HOME] Done — DANG CHAM cong tac top (home CHUAN) -> da xoa latch loi phan cung"));
+    } else {
+        hwFault |= HWF_HOME;                               // v29: het hanh trinh van chua cham -> cong tac D7 / stepper / ket co khi
+        Serial.println(F("[HOME] !! Done NHUNG KHONG cham cong tac top — KIEM TRA cong tac/day D7 / stepper / ket co khi. Vi tri co the SAI."));
+    }
 }
 
 // ======================================================
@@ -1155,6 +1167,7 @@ void emitStatus()
             case EF_CLUMP: err = F("CLUMP"); break;
             case EF_STALL: err = F("STALL"); break;
             case EF_NOMOTOR: err = F("NOMOVE"); break;
+            case EF_SENSOR: err = F("SENSOR"); break;   // v29: chua nhan duoc la nao (cam bien D4 / khay bai)
             case EF_LIMIT: err = F("LIMIT"); break;
             case EF_NOHOME: err = F("NOHOME"); break;   // v28.2: tu choi start vi chua home
             case EF_LINK:   err = F("LINK");   break;   // v28.3: mat lien lac Pi khi dang chay
@@ -1171,6 +1184,7 @@ void emitStatus()
     Serial.print(F(" tot="));  Serial.print(batchTarget);
     Serial.print(F(" err="));  Serial.print(err);
     Serial.print(F(" spd="));  Serial.print(motorPWM);
+    Serial.print(F(" hw="));   Serial.print(hwFault);      // v29: bitmask latch phan cung (0 = khoe) -> Pi lam mo icon + chan START
     // v28.2 HOME-GATING: Pi doc lim de MO/KHOA nut START (1 = dang cham cong tac top = home chuan).
     Serial.print(F(" lim="));  Serial.println(limitHit() ? 1 : 0);
 }
@@ -1187,6 +1201,16 @@ void doMachineOn()
     if (STEPPER_ENABLED && !limitHit()) {
         runStatus = RS_ERROR; lastErr = EF_NOHOME;
         Serial.println(F("\n[NOHOME] B1 TU CHOI: platform chua cham cong tac top. Gui B0 de home roi start lai."));
+        emitStatus();
+        return;
+    }
+    // v29 HW-FAULT GATE: con latch loi phan cung chua khac phuc -> TU CHOI B1 ngay o firmware
+    //   (khong phu thuoc Pi). Sua xong bam HOME (returnStepperHomeBlocking cham cong tac) de xoa latch.
+    if (hwFault) {
+        runStatus = RS_ERROR;
+        lastErr = (hwFault & HWF_SENSOR) ? EF_SENSOR
+                : (hwFault & HWF_DRIVE)  ? EF_NOMOTOR : EF_NOHOME;
+        Serial.println(F("\n[HWFAULT] B1 TU CHOI: con loi phan cung chua khac phuc. Sua roi bam HOME de re-arm."));
         emitStatus();
         return;
     }
@@ -1519,9 +1543,10 @@ void loop()
             {
                 uint8_t pwmWas = motorPWM;
                 motorStop();
+                hwFault |= HWF_DRIVE;                       // v29: latch DC motor / encoder -> chan START toi khi HOME
                 Serial.print(F("\n[NOMOTOR] PWM=")); Serial.print(pwmWas);
                 Serial.print(F(" ra nhung encoder=")); Serial.print(encNow);
-                Serial.println(F(" -> MOTOR KHONG QUAY (chua cap dien motor? / ket cung). KIEM TRA NGUON MOTOR."));
+                Serial.println(F(" -> MOTOR KHONG QUAY (mat dien motor?) HOAC ENCODER D2/D3 mat tin hieu. KIEM TRA nguon motor + day encoder. Bam HOME de re-arm."));
                 machineState = IDLE;
                 runStatus    = RS_ERROR;
                 lastErr      = EF_NOMOTOR;
@@ -1688,15 +1713,26 @@ void loop()
         else if (!sPresent && (millis() - sPresentSince) > (uint32_t)(cardCount == 0 ? GAP_STALL_START : GAP_STALL_MS))
         {
             motorStop();
-            Serial.print(F("\n[STALL] khong co la ")); Serial.print(millis() - sPresentSince);
-            Serial.println(F("ms -> DA DUNG MOTOR (het la hoac mat tiep xuc chong the)."));
+            if (cardCount == 0) {
+                // v29: het ca GAP_STALL_START(13s) ma CHUA nhan duoc DU 1 la nao ->
+                //   cam bien D4 chet/tuot day HOAC khay bai RONG HOAC con lan khong bat duoc la.
+                //   GIU nguyen nguong 13s CU (da chung minh an toan voi priming la#1 ~7s) -> KHONG bao nham may khoe.
+                hwFault |= HWF_SENSOR;                        // latch -> chan START toi khi HOME (re-arm)
+                lastErr  = EF_SENSOR;
+                Serial.print(F("\n[SENSOR] khong nhan duoc la nao sau ")); Serial.print(millis() - sPresentSince);
+                Serial.println(F("ms -> KIEM TRA: (1) con bai trong khay khong? (2) day/cam bien D4. Bam HOME de re-arm."));
+            } else {
+                // het deck BINH THUONG: het la that -> KHONG latch, KHONG do loi cam bien (honest).
+                lastErr  = EF_STALL;
+                Serial.print(F("\n[STALL] khong co la ")); Serial.print(millis() - sPresentSince);
+                Serial.println(F("ms -> DA DUNG MOTOR (het la hoac mat tiep xuc chong the)."));
+            }
             Serial.print(F("[SUMMARY] da nha ")); Serial.print(cardCount);
             Serial.print(F(" la, ")); Serial.print(clumpEvents);
             Serial.println(F(" lan dinh cum. TAT cong tac de home platform."));
             printRunSummary();
             machineState = IDLE;             // KHONG home o day -> chi home khi TAT cong tac
-            runStatus    = RS_ERROR;         // báo Pi: hết lá / mất tiếp xúc -> kết thúc mẻ
-            lastErr      = EF_STALL;
+            runStatus    = RS_ERROR;         // báo Pi: hết lá / mất tiếp xúc / cam bien -> kết thúc mẻ
             emitStatus();
         }
         // ===== v5.53: LÁ KẸT CHE SENSOR -> TỰ GỠ (jam-recovery) rồi mới DỪNG =====

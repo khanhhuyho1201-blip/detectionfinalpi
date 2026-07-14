@@ -536,10 +536,13 @@ def _ensure_rfcomm(device: str, mac: str) -> bool:
 class EscposFilePrinter(Printer):
     """ESC/POS over a device file — USB (/dev/usb/lp*) or BT RFCOMM (/dev/rfcomm0)."""
 
-    def __init__(self, device: str, width_dots: int = 384, bt_mac: str = ""):
+    def __init__(self, device: str, width_dots: int = 384, bt_mac: str = "", cut: str = "std"):
         self._device = device
         self._width = int(width_dots)   # bề rộng in (dot): 58mm=384, 80mm=576 — QR fill trọn
         self._mac = bt_mac or ""        # MAC BT (để tự bind lại RFCOMM sau reboot)
+        # v29.1: kiểu cắt. "std" = GS V 66 0 (chuẩn Epson). "legacy" = ESC i — lệnh cắt CHÍNH CHỦ
+        #   của Masung kiosk (đo thật 2026-07-14: GS V 66 feed ~40cm; GS V 0/1 bị bỏ qua).
+        self._cut = cut
 
     def is_available(self) -> bool:
         if self._mac and self._device.startswith("/dev/rfcomm"):
@@ -557,13 +560,20 @@ class EscposFilePrinter(Printer):
         self._heal()                                     # BT: bind lại RFCOMM nếu mất (sau reboot)
         try:
             from escpos.printer import File
-            p = File(self._device, auto_cut=True)
+            # auto_cut=False: close() KHÔNG cắt thêm lần nữa — trước đây auto_cut=True + p.cut()
+            # = CẮT 2 LẦN -> feed tới dao 2 lần -> đuôi giấy trắng dài gấp đôi (anh phàn nàn 2026-07-14).
+            p = File(self._device, auto_cut=False)
             img, box = _qr_fill(run_id, self._width)     # RESPONSIVE: fill paper width
             if box < 3:
                 logger.warning("EscposFile: giấy %ddot quá hẹp cho QR quét được (%d dot/module)",
                                self._width, box)
             p.image(img, center=True)
-            p.cut()
+            # đuôi giấy NGẮN NHẤT: "legacy" = ESC i (Masung kiosk — GS V 66 của nó feed ~40cm);
+            # "std" = GS V 66 0 (feed vừa đủ tới dao, chuẩn Epson, không +6 dòng như cut() mặc định).
+            if self._cut == "legacy":
+                p._raw(b"\x1bi")
+            else:
+                p.cut(feed=False)
             p.close()
             logger.info("EscposFile printed QR for %s → %s (%ddot, box=%d)",
                         run_id, self._device, self._width, box)
@@ -579,11 +589,13 @@ class EscposFilePrinter(Printer):
         self._heal()                                     # BT: bind lại RFCOMM nếu mất (sau reboot)
         try:
             from escpos.printer import File
-            p = File(self._device, auto_cut=True)
+            p = File(self._device, auto_cut=False)       # 1 lần cắt duy nhất (hết đuôi giấy dài)
             p.set(align="center", bold=True, double_height=True, double_width=True)
             p.text(text + "\n")
-            p.ln(3)
-            p.cut()
+            if self._cut == "legacy":
+                p._raw(b"\x1bi")                         # ESC i — cắt chính chủ Masung kiosk
+            else:
+                p.cut(feed=False)                        # GS V 66 0: feed vừa đủ tới dao
             p.close()
             return True
         except Exception as e:
@@ -595,11 +607,115 @@ _BACKENDS = {"cups": CupsPrinter, "escpos_net": EscposNetPrinter,
              "escpos_file": EscposFilePrinter, "zpl_net": ZplNetPrinter}
 
 
-def get_printer() -> Printer:
-    """Return the printer backend.
-    Priority: printer.json (Setup UI) → settings.printer.backend → CupsPrinter.
+class NullPrinter(Printer):
+    """No printer configured AND none physically plugged in.
+
+    Never claims to be available, and NEVER silently prints to some leftover /
+    foreign CUPS queue. 'Removed = forgotten completely' (user rule 2026-07-14):
+    once the user removes the WiFi/BT printer, the app must not resurrect it — the
+    only thing allowed to print without config is a USB printer physically cắm vào.
     """
-    # 1. Setup-UI config file
+    def is_available(self) -> bool:
+        return FAKE_PRINTER
+
+    def print_qr(self, run_id: str) -> bool:
+        if FAKE_PRINTER:
+            logger.info("FAKE_PRINTER: simulated null print for %s", run_id)
+            return True
+        logger.warning("print_qr(%s): CHUA cau hinh may in va khong co USB cam -> KHONG in", run_id)
+        return False
+
+    def print_text(self, text: str) -> bool:
+        if FAKE_PRINTER:
+            return True
+        logger.warning("print_text: CHUA cau hinh may in va khong co USB cam -> KHONG in")
+        return False
+
+
+def _usb_cups_queue() -> str | None:
+    """Name of an ENABLED CUPS queue for a PHYSICALLY-connected USB printer
+    (device-URI usb://...  hoặc ipp://localhost = IPP-over-USB loopback). None nếu không
+    có. Dùng CHỈ khi KHÔNG có printer.json -> máy in USB cắm trực tiếp vẫn in qua driver
+    CUPS đúng (laser/inkjet/driverless label). Queue mạng (dnssd/socket/lpd/ipp-remote)
+    KHÔNG bao giờ khớp -> 'remove = quên máy WiFi'.
+
+    [review 2026-07-14 CONFIRMED] BỎ QUA queue đang 'disabled' (CUPS tự stop-printer sau khi
+    in hỏng / rút máy). Trước đây trả cả queue disabled -> is_available() cho usb:// luôn True
+    (không probe được) -> START mở oan cho máy chết. Lọc theo lpstat -p (mirror _printer_name)."""
+    try:
+        vout = subprocess.run(["lpstat", "-v"], capture_output=True,
+                             text=True, timeout=5).stdout
+    except Exception as e:
+        logger.debug("lpstat -v (usb queue) failed: %s", e)
+        return None
+    # tập queue đang BẬT (không 'disabled') — như bộ lọc trong CupsPrinter._printer_name()
+    enabled: set | None
+    try:
+        pout = subprocess.run(["lpstat", "-p"], capture_output=True,
+                             text=True, timeout=5).stdout
+        enabled = set()
+        for ln in pout.splitlines():
+            if ln.startswith("printer ") and "disabled" not in ln:
+                parts = ln.split()
+                if len(parts) >= 2:
+                    enabled.add(parts[1])
+    except Exception:
+        enabled = None    # không lấy được trạng thái -> đừng chặn oan, giữ hành vi trước
+    for line in vout.splitlines():
+        if not line.startswith("device for "):
+            continue
+        name, _, uri = line[len("device for "):].partition(":")
+        name = name.strip(); uri = uri.strip().lower()
+        if not name:
+            continue
+        # usb:// = USB thô/driver; ipp://localhost(127.0.0.1) = IPP-over-USB loopback (cũng là USB cắm)
+        is_usb = uri.startswith("usb:") or uri.startswith("ipp://localhost") or uri.startswith("ipp://127.0.0.1")
+        if not is_usb:
+            continue
+        if enabled is not None and name not in enabled:
+            continue      # queue USB nhưng ĐANG disabled -> bỏ (không in ra máy chết/đã rút)
+        return name
+    return None
+
+
+def _usb_width_dots(default: int = 384) -> int:
+    """Khổ in (dot) cho máy in USB thô — QR phải FULL khổ giấy (luật 2026-07):
+      1) env CARD_USB_WIDTH_DOTS (override tay: 384=58mm, 576=80mm)
+      2) sniff IEEE1284 ID từ kernel usblp: Masung ESP-xxx (kiosk) = khổ 80mm -> 576
+         (đo thật 2026-07-14: ESP-004 in 384 chỉ ~2/3 giấy; 576 mới full)
+      3) mặc định 384 (58mm phổ biến nhất, in rộng quá khổ sẽ bị cắt/rác)."""
+    w = os.environ.get("CARD_USB_WIDTH_DOTS", "")
+    if w.isdigit() and int(w) >= 128:
+        return int(w)
+    if _usb_is_masung():
+        return 576
+    return default
+
+
+def _usb_is_masung() -> bool:
+    """Máy in USB đang cắm có phải Masung ESP (kiosk) không — sniff IEEE1284 ID từ usblp."""
+    try:
+        for p in glob.glob("/sys/class/usbmisc/lp*/device/ieee1284_id"):
+            txt = open(p).read().lower()
+            if "masung" in txt or "esp-" in txt:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def get_printer() -> Printer:
+    """Return the printer backend that will ACTUALLY print.
+
+    Source of truth = printer.json (Setup UI). Rules the user chốt 2026-07-14:
+      • Configured (printer.json tồn tại) -> dùng ĐÚNG máy đó; nhớ qua mọi lần khởi động.
+      • Removed (không còn printer.json) -> QUÊN HOÀN TOÀN: KHÔNG bao giờ rơi về một queue
+        WiFi/CUPS còn sót. Chỉ máy in USB CẮM TRỰC TIẾP mới được phép in.
+      • USB cắm (chưa cấu hình) -> in ra máy USB đó (dùng queue usb:// của CUPS nếu có =
+        đúng driver; không thì ESC/POS thô ra /dev/usb/lp0).
+      • Không gì cả -> NullPrinter (báo không sẵn sàng; START đã gate theo cái này).
+    """
+    # 1. Setup-UI config file — nguồn DUY NHẤT chọn máy in mạng/BT/đặt-tên.
     try:
         from printer_setup import load_cfg
         cfg = load_cfg()
@@ -618,32 +734,46 @@ def get_printer() -> Printer:
     except Exception as e:
         logger.debug("printer cfg load: %s", e)
 
-    # 2. USB AUTO-DETECT (backend-only, KHÔNG hiển thị trên UI — theo yêu cầu anh):
-    #    máy in USB thô cắm vào + CHƯA cấu hình gì + không có queue CUPS -> tự dùng ESC/POS file.
-    #    CHỈ /dev/usb/lp* (usblp = máy in thật). TUYỆT ĐỐI KHÔNG đụng /dev/ttyUSB* (đó là Arduino
-    #    card feeder!) — quét nhầm là hỏng máy. -> đường Arduino an toàn tuyệt đối.
+    # 2. CHƯA cấu hình -> CHỈ máy in USB cắm trực tiếp mới được in.
+    #    (Không bao giờ 1 queue WiFi/mạng còn sót — 'đã remove là quên'.)
+    #    CHỈ /dev/usb/lp* + queue usb:// (usblp = máy in thật). TUYỆT ĐỐI KHÔNG đụng
+    #    /dev/ttyUSB* (đó là Arduino card feeder!) — đường Arduino an toàn tuyệt đối.
     try:
-        usb = sorted(glob.glob("/dev/usb/lp*"))
-        if usb and CupsPrinter()._printer_name() is None:
-            logger.info("USB printer auto-detected (no config, no CUPS queue) -> %s", usb[0])
-            return EscposFilePrinter(usb[0])
+        q = _usb_cups_queue()                       # máy in USB có driver CUPS đàng hoàng?
+        if q:
+            logger.info("chua config -> may in USB qua CUPS queue %r", q)
+            return CupsPrinter(cups_name=q)
+        usb = sorted(glob.glob("/dev/usb/lp*"))     # USB thô (thermal/label) -> ESC/POS
+        if usb:
+            w = _usb_width_dots()
+            cut = "legacy" if _usb_is_masung() else "std"   # Masung kiosk: ESC i (GS V 66 feed ~40cm)
+            logger.info("chua config -> may in USB tho %s (ESC/POS, %d dot, cut=%s)", usb[0], w, cut)
+            return EscposFilePrinter(usb[0], w, cut=cut)
     except Exception as e:
         logger.debug("usb auto-detect: %s", e)
 
-    # 3. Legacy env var (settings.printer.backend)
-    name = settings.printer.backend.lower()
-    return _BACKENDS.get(name, CupsPrinter)()
+    # 3. Env override — CHỈ khi được đặt TƯỜNG MINH (không dùng mặc định 'cups' im lặng,
+    #    vì nó sẽ hồi sinh 1 queue đã bị remove / của app khác).
+    if os.environ.get("CARD_PRINTER_BACKEND"):
+        name = settings.printer.backend.lower()
+        try:
+            return _BACKENDS.get(name, CupsPrinter)()   # escpos_net/file/zpl cần tham số -> có thể raise
+        except Exception as e:
+            logger.warning("CARD_PRINTER_BACKEND=%r khong khoi tao duoc (%s) -> NullPrinter", name, e)
+            return NullPrinter()
+
+    # 4. Không cấu hình, không USB -> quên sạch, KHÔNG in bừa.
+    return NullPrinter()
 
 
-# module-level singleton + convenience helpers
-_printer: Printer | None = None
+# convenience helpers — resolve FRESH mỗi lần: printer.json / USB cắm-rút / queue CUPS đều
+# đổi lúc chạy (setup, remove, cắm USB sau khi boot). Resolve rẻ (đọc file + glob; chỉ chạy
+# lpstat khi CHƯA cấu hình). KHÔNG cache singleton -> cắm/rút USB phản ánh ngay, không cần restart.
+_printer: Printer | None = None   # giữ lại cho các chỗ cũ gán _printer=None (no-op an toàn)
 
 
 def _get() -> Printer:
-    global _printer
-    if _printer is None:
-        _printer = get_printer()
-    return _printer
+    return get_printer()
 
 
 def printer_available() -> bool:

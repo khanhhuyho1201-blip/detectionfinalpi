@@ -35,6 +35,7 @@ ERR_LIMIT = "LIMIT"
 ERR_NOMOVE = "NOMOVE"   # v6.4: motor commanded but encoder not turning (no motor power / jammed)
 ERR_NOHOME = "NOHOME"   # v28.2: B1 refused — platform not touching the top limit switch
 ERR_LINK = "LINK"       # v28.3: firmware deadman fired — Pi link lost while running (motor stopped)
+ERR_SENSOR = "SENSOR"   # v29: chưa nhận được lá nào (cảm biến D4 chết/tuột dây / khay bài rỗng ngay đầu)
 
 
 @dataclass
@@ -49,6 +50,8 @@ class MachineStatus:
     # v28.2 HOME-GATING: True = platform touching the top limit switch (safe to start).
     # Default True so the simulator and older firmware (no lim= field) keep working.
     homed: bool = True
+    # v29: bitmask latch phần cứng từ firmware (0 = khỏe). Firmware cũ (không gửi hw=) -> 0.
+    hw: int = 0
 
     def copy(self) -> "MachineStatus":
         return replace(self)
@@ -95,7 +98,7 @@ def parse_line(line: str, st: MachineStatus) -> tuple[MachineStatus, str]:
             s.speed = _to_int(kv["spd"], s.speed)
         if "err" in kv:
             s.error = kv["err"].upper()
-            if s.error not in (ERR_NONE, ERR_CLUMP, ERR_STALL, ERR_LIMIT, ERR_NOMOVE, ERR_NOHOME, ERR_LINK):
+            if s.error not in (ERR_NONE, ERR_CLUMP, ERR_STALL, ERR_LIMIT, ERR_NOMOVE, ERR_NOHOME, ERR_LINK, ERR_SENSOR):
                 s.error = ERR_NONE
         # v28.2: lim=1 -> touching top switch (homed); lim=0 -> not homed, START must be gated
         # [review v28.3] Firmware CŨ (trước v28.2) không có field lim -> ST không kèm 'lim='.
@@ -105,6 +108,11 @@ def parse_line(line: str, st: MachineStatus) -> tuple[MachineStatus, str]:
             s.homed = kv["lim"].strip() == "1"
         else:
             s.homed = True
+        # v29: hw= bitmask latch phần cứng (0 = khỏe). Firmware cũ không gửi hw= -> 0 (không bịa lỗi).
+        if "hw" in kv:
+            s.hw = _to_int(kv["hw"], 0)
+        else:
+            s.hw = 0
         # firmware flags a real-time clump via err=CLUMP while still RUN —
         # surface it as a transient warning (yellow) without ending the batch.
         if s.error == ERR_CLUMP and s.state == RUN:
@@ -143,6 +151,13 @@ def parse_line(line: str, st: MachineStatus) -> tuple[MachineStatus, str]:
         s.error = ERR_NOMOVE
         s.state = ERROR
         return s, "nomotor"
+
+    if upper.startswith("[SENSOR]"):
+        # v29: firmware chưa nhận được lá nào sau GAP_STALL_START (cardCount==0) ->
+        # cảm biến D4 chết/tuột dây HOẶC khay bài rỗng ngay đầu mẻ.
+        s.error = ERR_SENSOR
+        s.state = ERROR
+        return s, "sensor"
 
     if upper.startswith("[LIMIT]"):
         # firmware's [LIMIT] = platform hit travel ceiling, a NON-fatal warning

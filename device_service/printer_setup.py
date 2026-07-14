@@ -623,17 +623,36 @@ def remove_printer() -> None:
 # ── Status ────────────────────────────────────────────────────────────────────
 
 def get_status() -> dict:
+    """Trạng thái máy in cho UI. Báo THẬT máy nào sẽ in để user không nhầm
+    'USB vừa cắm' với 'WiFi cũ còn sót':
+      source = config -> đang dùng máy đã Setup (printer.json)
+             = usb    -> chưa cấu hình nhưng có máy in USB cắm trực tiếp -> sẽ in ra USB
+             = none   -> không có gì -> KHÔNG in (đã quên máy cũ)
+    available = máy in được RESOLVE có thật sự sẵn sàng không.
+    """
     cfg = load_cfg()
     available = False
-    if cfg:
-        try:
-            from printer import printer_available
-            available = printer_available()
-        except Exception:
-            pass
+    source = "none"
+    label = ""
+    try:
+        from printer import get_printer, NullPrinter
+        p = get_printer()                       # resolve ĐÚNG máy sẽ in (fresh)
+        available = bool(p.is_available())
+        if cfg:
+            source = "config"
+            label = cfg.get("name") or cfg.get("address") or cfg.get("device") or "Configured"
+        elif isinstance(p, NullPrinter):
+            source = "none"
+        else:
+            source = "usb"                      # chưa cấu hình nhưng có USB cắm trực tiếp
+            label = "USB printer"
+    except Exception as e:
+        logger.debug("get_status resolve error: %s", e)
     return {
         "configured": cfg is not None,
         "available":  available,
+        "source":     source,       # config | usb | none
+        "label":      label,        # máy sẽ in thật sự
         "config":     cfg or {},
     }
 

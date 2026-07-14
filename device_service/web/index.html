@@ -274,6 +274,25 @@
   .sheet .lbl{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim-2);margin-bottom:1px}
   .runs{display:flex;flex-direction:column;gap:.35rem;overflow-y:auto;flex:1 1 auto;min-height:0;scrollbar-width:none;-webkit-overflow-scrolling:touch}
   .runs::-webkit-scrollbar{display:none}
+  /* Settings = FULL SCREEN luôn (MỌI kích cỡ màn/Chrome), bỏ dải đen bên trái.
+     #sheet (id) thắng mọi rule .sheet{width:...} bên dưới -> phủ kín 100%. */
+  #sheet{inset:0;left:0;right:0;top:0;bottom:0;width:100%;max-width:none;height:100%;
+    border-left:0;border-radius:0;box-shadow:none}
+  /* Full-screen: 2 cột (≤3 run mỗi cột), KHÔNG vạch chia. Mỗi cột: runs TRÊN, Setup ĐÁY. */
+  .setgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;flex:1 1 auto;min-height:0;margin-top:.15rem}
+  /* runs LẤP đầy phần trên (cuộn nếu quá nhiều), .setend flex:0 -> Printer/WiFi STICKY ĐÁY,
+     LUÔN thẳng hàng nhau. Cột ít run hơn: WiFi/Printer VẪN ở đáy (không tự dời lên cao). */
+  .setcol{display:flex;flex-direction:column;min-height:0;min-width:0;gap:.5rem}
+  .setcol .runs{flex:1 1 auto;min-height:0;overflow-y:auto}
+  /* Khối Setup (Printer/WiFi) = như 1 RUN CARD: nội dung TRÁI, nút Setup PHẢI, 1 khung, THẤP */
+  .setend{flex:0 0 auto;min-height:78px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.5rem;
+    padding:.7rem .8rem;border:1px solid var(--line-soft);border-radius:12px;background:rgba(255,255,255,.025)}
+  .setend .run-info{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:.35rem}  /* label ↔ tên GIÃN cho dễ thở */
+  .setend .lbl{margin:0}
+  .set-name{display:flex;align-items:center;gap:.45rem;min-width:0}
+  .set-name .sr-label{flex:1 1 auto;min-width:0;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .setend .sr-btn{flex:0 0 auto}
+  .setend .devinfo{flex:0 0 100%}   /* device id (khi hiện) xuống hàng riêng, không phá hàng Setup */
   .run{display:flex;align-items:center;justify-content:space-between;padding:.55rem .75rem;border-radius:9px;
     min-height:40px;background:rgba(255,255,255,.025);border:1px solid var(--line-soft)}
   .run .id{font-family:var(--mono);font-size:11px;color:var(--text)}
@@ -321,7 +340,9 @@
   .sr-btn:hover{border-color:var(--gold);color:var(--gold)}
   /* nút Setup (printer) và Resetup (wifi) trong Settings: cùng 1 bề rộng cố định
      cho thẳng hàng — chữ khác độ dài nên để tự co thì 2 khung lệch nhau */
-  #prnSetupBtn,#wifiSetupBtn{width:8.5em;padding-left:0;padding-right:0;text-align:center}
+  /* nút Setup = ĐÚNG cỡ nút Print phía trên (printer=wifi). run-info co được + tên ellipsis nếu quá dài
+     -> Setup luôn 1 hàng, "Not configured" đủ chỗ hiện đầy đủ. */
+  #prnSetupBtn,#wifiSetupBtn{width:auto;min-width:44px;padding:.3rem .65rem;font-size:11px;text-align:center;flex:0 0 auto}
   /* ── Printer Setup overlay ── */
   .prnov{position:fixed;inset:0;z-index:45;display:none;align-items:center;justify-content:center;
     background:rgba(6,6,8,.9);backdrop-filter:blur(6px);padding:3vh 4vw}
@@ -469,6 +490,20 @@
     filter:drop-shadow(0 0 12px rgba(229,86,91,.45))}
   .errbox h2{font-family:var(--serif);font-weight:600;font-size:clamp(19px,6vw,27px);color:var(--text);
     line-height:1.2;text-wrap:balance}
+  /* Popup phần cứng mất kết nối — clean, tông vàng trung tính (thông báo), cùng vibe errbox */
+  .hwov{position:fixed;inset:0;z-index:48;display:none;align-items:center;justify-content:center;
+    background:rgba(6,6,8,.92);backdrop-filter:blur(5px);padding:5vh 5vw}
+  .hwov.open{display:flex;animation:errpop .18s ease}
+  .hwbox{background:linear-gradient(180deg,#1a160e,#120f0a);border:1px solid var(--line);
+    border-radius:22px;padding:clamp(18px,4.5vh,30px) clamp(22px,6vw,40px);width:min(90vw,400px);
+    display:flex;flex-direction:column;align-items:center;gap:clamp(10px,2.4vh,16px);text-align:center;
+    box-shadow:0 24px 70px rgba(0,0,0,.7),0 0 46px rgba(217,180,90,.1)}
+  .hwbox .hw-ic{color:var(--gold);line-height:0}
+  .hwbox .hw-ic svg{width:clamp(40px,13vw,58px);height:clamp(40px,13vw,58px);filter:drop-shadow(0 0 12px rgba(217,180,90,.4))}
+  .hwbox h2{font-family:var(--serif);font-weight:600;font-size:clamp(18px,5.5vw,25px);color:var(--text);margin:0}
+  .hw-list{display:flex;flex-direction:column;gap:5px;font-size:clamp(14px,4vw,17px);color:var(--dim)}
+  .hw-list .hw-item{color:var(--red-hi);font-weight:600}
+  html.kiosk .hwbox h2{font-size:1.4rem} html.kiosk .hw-list{font-size:16px}
   html.kiosk .errbox .btn{min-width:min(66vw,190px);width:auto;
     padding:clamp(13px,2.6vh,18px) clamp(30px,9vw,48px);font-size:clamp(17px,4.6vw,22px)}
   /* confirm variant (gold, with message + 2 buttons) */
@@ -493,7 +528,14 @@
   /* ── Compact everything for the short 3.5" panel (≤380px tall) ── */
   @media (max-height:380px){
     /* Settings drawer: much smaller so it looks right on 480x320 */
-    html.kiosk .sheet{width:min(360px,86vw);padding:8px 14px 8px;gap:.14rem}
+    /* FULL-SCREEN 1 trang: phủ kín 480×320, chia 50/50 (runs trái | printer+wifi phải),
+       KHÔNG cuộn — user chỉ click. */
+    html.kiosk .sheet{inset:0;left:0;right:0;width:100%;max-width:none;height:100%;
+      padding:7px 13px 9px;gap:.15rem;border-radius:0;border-left:0;overflow:hidden}
+    html.kiosk .setgrid{gap:10px;margin-top:.1rem}
+    html.kiosk .setcol{gap:.35rem}
+    html.kiosk .setcol .runs{flex:1 1 auto;min-height:0;overflow-y:auto}
+    html.kiosk .setend{min-height:80px;padding:.55rem .65rem;gap:.2rem}
     html.kiosk .sheet h3{font-size:1.05rem;margin-bottom:0}
     html.kiosk .sheet .lbl{font-size:9px;letter-spacing:.14em;margin-bottom:0}
     /* Icon topbar BẤM ĐƯỢC (gear/wifi/printer): nới HIT-AREA ~46px, glyph giữ nguyên
@@ -510,13 +552,14 @@
     html.kiosk .setrow{min-height:46px;gap:.5rem;padding:.12rem 0}
     html.kiosk .sr-dot{width:.45rem;height:.45rem}
     html.kiosk .sr-btn{min-height:44px;font-size:13px;padding:.55rem 1rem;border-radius:9px}  /* Setup ≥44px */
-    html.kiosk #prnSetupBtn,html.kiosk #wifiSetupBtn{width:7.5em}
+    /* Setup TO cho dễ bấm cảm ứng (khung còn chỗ): cao 54px + rộng hơn */
+    html.kiosk #prnSetupBtn,html.kiosk #wifiSetupBtn{width:auto;min-width:82px;min-height:54px;padding:.5rem 1rem;font-size:13.5px}
     html.kiosk .shdiv{margin:.08rem 0}
     /* 3 recent-runs hiện THẲNG hết, KHÔNG cuộn riêng: khung .runs tự giãn theo nội
        dung (JS chỉ render tối đa 3 run) thay vì bị ép vào khoảng giữa rồi cuộn.
        Drawer (.sheet) vẫn cuộn được để tới Printer/WiFi — nhưng 3 run luôn thấy ở trên. */
-    html.kiosk .runs{flex:0 0 auto;overflow:visible;gap:.3rem}
-    html.kiosk .run{min-height:46px;padding:.5rem .65rem}
+    html.kiosk .runs{gap:.28rem}
+    html.kiosk .run{min-height:52px;padding:.5rem .6rem}
     html.kiosk .run .id{font-size:11px}
     html.kiosk .run .tag{font-size:10.5px}
     html.kiosk .run .printbtn{min-height:42px;font-size:12.5px;padding:.4rem .8rem;min-width:68px}
@@ -857,34 +900,40 @@
     <button class="close" id="close">&times;</button>
     <h3>Settings</h3>
 
-    <div class="devinfo" id="devInfo" style="display:none">
-      <div class="lbl" style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:0">
-        <span>Device</span>
-        <b id="devId" style="font-family:var(--mono);font-weight:400;font-size:11px;letter-spacing:0;text-transform:none;color:var(--text);word-break:break-all;user-select:all;cursor:text;white-space:normal;text-align:right" title="Click to select all"></b>
-      </div>
-    </div>
-
+    <!-- Full-screen: 6 mẻ gần nhất chia 2 CỘT (≤3 trái, ≤3 phải). Mỗi cột: runs Ở TRÊN,
+         nút Setup GHIM ĐÁY — Printer đáy trái, WiFi đáy phải. Ít hơn 6 mẻ thì Setup VẪN
+         ở đáy (không dồn lên). KHÔNG có vạch chia giữa. -->
     <div class="lbl">Recent runs</div>
-    <div class="runs" id="runs"></div>
+    <div class="setgrid">
+      <!-- CỘT TRÁI: run + Printer setup ghim đáy -->
+      <section class="setcol">
+        <div class="runs" id="runs"></div>
+        <div class="setend">
+          <div class="run-info">
+            <div class="lbl">Printer</div>
+            <div class="set-name"><span class="sr-dot" id="prnLed"></span><span class="sr-label" id="prnName">Not configured</span></div>
+          </div>
+          <button class="sr-btn" id="prnSetupBtn">Setup</button>
+        </div>
+      </section>
 
-    <div class="shdiv"></div>
-
-    <!-- Printer — compact row only; full setup in overlay -->
-    <div class="lbl">Printer</div>
-    <div class="setrow">
-      <span class="sr-dot" id="prnLed"></span>
-      <span class="sr-label" id="prnName">Not configured</span>
-      <button class="sr-btn" id="prnSetupBtn">Setup</button>
-    </div>
-
-    <div class="shdiv"></div>
-
-    <!-- WiFi — compact row, nút Setup trigger lại luồng QR -->
-    <div class="lbl">WiFi</div>
-    <div class="setrow">
-      <span class="sr-dot" id="wifiLed"></span>
-      <span class="sr-label" id="wifiLbl">—</span>
-      <button class="sr-btn" id="wifiSetupBtn">Setup</button>
+      <!-- CỘT PHẢI: run + WiFi setup ghim đáy -->
+      <section class="setcol">
+        <div class="runs" id="runsR"></div>
+        <div class="setend">
+          <div class="run-info">
+            <div class="lbl">WiFi</div>
+            <div class="set-name"><span class="sr-dot" id="wifiLed"></span><span class="sr-label" id="wifiLbl">—</span></div>
+          </div>
+          <button class="sr-btn" id="wifiSetupBtn">Setup</button>
+          <div class="devinfo" id="devInfo" style="display:none">
+            <div class="lbl" style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin:.3rem 0 0">
+              <span>Device</span>
+              <b id="devId" style="font-family:var(--mono);font-weight:400;font-size:11px;letter-spacing:0;text-transform:none;color:var(--text);word-break:break-all;user-select:all;cursor:text;white-space:normal;text-align:right" title="Click to select all"></b>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
 
 
@@ -993,6 +1042,15 @@
     <div class="err-ic"><svg viewBox="0 0 256 256" aria-hidden="true"><path fill="currentColor" d="M240.26 186.1L152.81 34.23a28.74 28.74 0 0 0-49.62 0L15.74 186.1a27.45 27.45 0 0 0 0 27.71A28.31 28.31 0 0 0 40.55 228h174.9a28.31 28.31 0 0 0 24.79-14.19a27.45 27.45 0 0 0 .02-27.71M116 104a12 12 0 0 1 24 0v40a12 12 0 0 1-24 0Zm12 88a16 16 0 1 1 16-16a16 16 0 0 1-16 16"/></svg></div>
     <h2 id="errTitle">Error</h2>
     <button class="btn" id="errBtn">OK</button>
+  </div>
+</div>
+
+<!-- Popup báo phần cứng mất kết nối — mở khi bấm icon chip lúc mờ; tự đóng sau 5s. Clean, ít chữ. -->
+<div class="hwov" id="hwov">
+  <div class="hwbox">
+    <div class="hw-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17 17H7V7h10m4 4V9h-2V7a2 2 0 0 0-2-2h-2V3h-2v2h-2V3H9v2H7c-1.11 0-2 .89-2 2v2H3v2h2v2H3v2h2v2a2 2 0 0 0 2 2h2v2h2v-2h2v2h2v-2h2a2 2 0 0 0 2-2v-2h2v-2h-2v-2m-6 2h-2v-2h2m2-2H9v6h6z"/></svg></div>
+    <h2>Not connected</h2>
+    <div class="hw-list" id="hwList"></div>
   </div>
 </div>
 
@@ -1148,6 +1206,7 @@
       elBtn=$("btn"),elNote=$("note"),elConn=$("conn"),elPrn=$("prnStat"),elArd=$("ardStat"),
       elCam=$("cam"),elLive=$("live"),elLiveTxt=$("liveTxt"),elHint=$("hint");
   var _startErr=null;   // when set (missing-connection string), the error popup stays up
+  var _hwMiss=[], _hwTimer=null;   // [v28.4] phần cứng đang mất kết nối + timer tự đóng popup 5s
 
   // ── chip canvas (perf: static parts pre-rendered once to an offscreen
   //    canvas; only the progress arc redraws, and only while the value moves) ──
@@ -1225,11 +1284,19 @@
     if(elPrn) elPrn.className="statico"+(s.printer?"":" off");
     // Arduino serial link — v28.2: mờ icon cả khi CHƯA HOME (chưa chạm công tắc top =
     // đang có vấn đề cơ khí / đang tự home) để user thấy tín hiệu máy chưa sẵn sàng.
-    // Chip SÁNG khi kết nối phần cứng + (đã home HOẶC ĐANG CHẠY mẻ). Lúc chạy platform hạ khỏi
-    //   công tắc top -> homed=false BÌNH THƯỜNG, KHÔNG được làm mờ chip. Chỉ mờ khi: mất kết nối,
-    //   hoặc (đứng yên + chưa home -> báo user bấm HOME). [fix 2026-07-14]
-    var _hwRun=(s.state==="checking"||s.state==="warmup"||s.state==="recording"||s.state==="uploading");
-    if(elArd) elArd.className="statico"+((s.connected && (s.homed!==false || _hwRun))?"":" off");
+    // Chip = TÍN HIỆU PHẦN CỨNG cắm vào Pi (Arduino serial + camera). SÁNG khi đủ; MỜ + BẤM ĐƯỢC
+    //   khi thiếu (bấm -> popup báo cái gì mất kết nối, tự đóng 5s). homed KHÔNG ảnh hưởng chip
+    //   (đã có nút HOME lo). Đủ tín hiệu -> KHÔNG bấm được. [v28.4]
+    _hwMiss=[];
+    if(s.connected===false) _hwMiss.push("Arduino");
+    if(s.camera===false)    _hwMiss.push("Camera");
+    // v29: latch phần cứng từ firmware (Cảm biến/khay · Motor/encoder · Công tắc/stepper)
+    if(s.hw_faults) s.hw_faults.forEach(function(f){ _hwMiss.push(f); });
+    if(elArd){
+      var _hwOk=(_hwMiss.length===0);
+      elArd.className="statico"+(_hwOk?"":" off");
+      elArd.style.cursor=_hwOk?"default":"pointer";
+    }
     var nt=s.target||0; if(nt!==target){target=nt;lastFrac=-1;} want=s.count||0; setCount(want); setVal();
     elTarget.textContent=s.target?s.target:"";
     // camera feed shown during warmup + recording + uploading
@@ -1273,6 +1340,8 @@
       else {
         var _miss=[];
         if(!s.connected) _miss.push("Arduino");
+        if(s.camera===false) _miss.push("Camera");                          // v29: thiếu camera -> chặn START ngay
+        if(s.hw_faults) s.hw_faults.forEach(function(f){ _miss.push(f); }); // v29: latch phần cứng (cảm biến/motor/công tắc)
         if(!(s.wifi&&s.wifi.connected)) _miss.push("WiFi");
         if(!s.online) _miss.push("Server");
         if(!s.printer) _miss.push("Printer");   // bắt buộc có máy in mới cho START
@@ -1440,6 +1509,18 @@
   var _ef=$("enrollfull"); if(_ef) _ef.addEventListener("click",function(e){ if(e.target===_ef) _ef.classList.remove("open"); });
   // WiFi icon — tap to open settings where WiFi status + setup live (like the printer icon)
   var _wbtn=$("wifiBtn"); if(_wbtn) _wbtn.addEventListener("click",function(){openS(true);});
+  // [v28.4] Icon chip: MỜ (thiếu tín hiệu phần cứng) -> bấm hiện popup báo cái gì mất kết nối, tự
+  //   đóng sau 5s. ĐỦ tín hiệu -> _hwMiss rỗng -> bấm không làm gì (render để cursor default).
+  function showHwPopup(){
+    if(!_hwMiss.length) return;
+    var el=$("hwList"); el.innerHTML="";
+    _hwMiss.forEach(function(m){ var d=document.createElement("div"); d.className="hw-item"; d.textContent=m; el.appendChild(d); });
+    $("hwov").classList.add("open");
+    clearTimeout(_hwTimer); _hwTimer=setTimeout(closeHwPopup,5000);
+  }
+  function closeHwPopup(){ clearTimeout(_hwTimer); $("hwov").classList.remove("open"); }
+  var _ardIcon=$("ardStat"); if(_ardIcon) _ardIcon.addEventListener("click",showHwPopup);
+  $("hwov").addEventListener("click",function(e){ if(e.target===this) closeHwPopup(); });
   $("close").addEventListener("click",function(){openS(false);});
   scrim.addEventListener("click",function(){openS(false);});
 
@@ -1523,10 +1604,12 @@
     return new Date(t).toLocaleDateString("en-US",{month:"short",day:"numeric"});
   }
   function loadHistory(){fetch("/api/history").then(function(r){return r.json();}).then(function(rs){
-    var box=$("runs"); box.innerHTML="";
-    if(!rs||!rs.length){box.innerHTML='<div class="run"><span class="id" style="color:var(--dim-2)">No runs yet</span></div>';return;}
+    var L=$("runs"),R=$("runsR"); if(!L)return; L.innerHTML=""; if(R)R.innerHTML="";
+    if(!rs||!rs.length){L.innerHTML='<div class="run"><span class="id" style="color:var(--dim-2)">No runs yet</span></div>';return;}
     var MAP={recording:["Recording","fail"],uploaded:["Uploaded","queue"],processing:["Processing","queue"],done:["Done","ok"],failed:["Failed","fail"]};
-    rs.slice(0,3).forEach(function(r){var m=MAP[r.status]||[r.status||"","fail"];   // 3 most recent
+    var list=rs.slice(0,6);                       // 6 mẻ gần nhất
+    var mid=Math.ceil(list.length/2);            // chia cân: 6->3/3, 5->3/2, 4->2/2, 3->2/1, 2->1/1
+    list.forEach(function(r,i){var m=MAP[r.status]||[r.status||"","fail"];
       var rid=r.run_id||"", failed=(r.status==="failed");   // failed run → nothing to print
       var d=document.createElement("div");d.className="run";
       d.innerHTML='<div class="run-info"><span class="id">'+rid.slice(0,8)+'</span>'
@@ -1534,7 +1617,7 @@
         +'<span class="tag '+m[1]+'">'+m[0]+'</span>'
         +'<button class="printbtn"'+(failed?' disabled title="Failed run — nothing to print"':'')+'>Print</button>';
       if(!failed) d.querySelector(".printbtn").addEventListener("click",function(){askPrint(rid,this);});  // confirm first — no accidental prints
-      box.appendChild(d);});
+      ((i<mid)?L:(R||L)).appendChild(d);});      // ≤3 trái, phần còn lại phải
   }).catch(function(){});}
 
   // confirm-before-print: Print buttons open this popup; #pcfYes actually prints
@@ -1666,16 +1749,25 @@
     // Load and render printer status (sheet row + overlay header)
     function loadPrinterStatus(){
       fetch("/api/printer/status").then(function(r){return r.json();}).then(function(d){
-        var cfg=d.config||{}, label=cfg.name||cfg.address||cfg.device||"Configured";
+        var cfg=d.config||{};
         _cfgName     = cfg.name||"";
         _cfgUri      = cfg.cups_uri||cfg.address||cfg.device||cfg.bt_mac||"";
         _cfgCupsName = cfg.cups_name||"";
+        // source: config = máy đã Setup | usb = USB cắm trực tiếp (chưa Setup) | none = không có gì.
+        // Hiện ĐÚNG máy sẽ in -> user không nhầm "USB vừa cắm" với "WiFi cũ đã remove".
+        var src=d.source||(d.configured?"config":"none");
+        var showName = src==="config" ? (d.label||cfg.name||cfg.address||cfg.device||"Configured")
+                     : src==="usb"    ? (d.label||"USB printer")
+                     :                   "Not configured";
+        var known=(src!=="none");                        // có máy sẽ in (config hoặc USB)
+        var dotCls="sr-dot"+(known?(d.available?" ok":" err"):"");
         // Sheet row
-        $("prnLed").className="sr-dot"+(d.configured?(d.available?" ok":" err"):"");
-        $("prnName").textContent=d.configured?label:"Not configured";
+        $("prnLed").className=dotCls;
+        $("prnName").textContent=showName;
         // Overlay header
-        $("povLed").className="sr-dot"+(d.configured?(d.available?" ok":" err"):"");
-        $("povName").textContent=d.configured?label:"Not configured";
+        $("povLed").className=dotCls;
+        $("povName").textContent=showName;
+        // 'Remove' chỉ khi có printer.json thật — USB trực tiếp không có gì để remove.
         $("povRemBtn").style.display=d.configured?"":"none";
       }).catch(function(){});
     }

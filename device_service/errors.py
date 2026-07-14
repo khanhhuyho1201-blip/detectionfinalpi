@@ -31,6 +31,9 @@ _GROUPS = {
     # CAM-xx) vẫn giữ nguyên trong log/admin để chẩn đoán.
     "device":     ("Device disconnected",    "Check machine power and cables, then retry"),
     "operation":  ("Operation error",        "Check the card tray, then retry"),
+    # v29: motor quay nhưng KHÔNG lá nào qua cảm biến sau 13s -> khay rỗng HOẶC cảm biến D4 lỗi.
+    #   Không khẳng định chắc chắn (honest): nêu khay bài trước, rồi cáp cảm biến; sửa xong bấm HOME.
+    "nofeed":     ("No cards detected",       "Check the card deck and the sensor cable (D4), then re-home"),
     "upload":     ("Upload failed",           "Video saved — tap Resend when the network is back"),
     "expired":    ("Run expired",             "The previous run timed out on the server — discarded. Tap to start a new batch"),
     "printer":    ("Printer disconnected",   "Turn on / connect the printer"),
@@ -72,6 +75,7 @@ _REG = {
     "MCU-04": ("device", SEV_ERROR, "retry"),
     "MCU-05": ("operation", SEV_ERROR, "retry"),
     "MCU-06": ("device", SEV_ERROR, "retry"),    # PWM ra nhưng encoder không quay = motor chưa cấp điện / kẹt cứng → gộp "Device disconnected"
+    "MCU-11": ("nofeed", SEV_ERROR, "retry"),    # v29: chưa nhận được lá nào — cảm biến D4 chết / khay rỗng ngay đầu mẻ
     "MCU-09": ("device", SEV_ERROR, "retry"),
     "MCU-10": ("incomplete", SEV_ERROR, "retry"),   # [v27] me chua du 412 la -> khong gui server
     # ── Printer (QR slip) ──

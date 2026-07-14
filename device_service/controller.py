@@ -23,7 +23,12 @@ import time
 import errors
 from api_client import APIClient
 from camera import TMP_DIR, Recorder, delete_video, probe as camera_probe
-from parser import MachineStatus, parse_line, ERR_LINK
+from parser import MachineStatus, parse_line, ERR_LINK, ERR_SENSOR
+
+# v29: giải mã bitmask hw= từ firmware -> tên phần cứng (dùng nguyên văn trên chip/popup + gate START)
+_HW_NAMES = [(0x01, "Cảm biến / khay bài"),
+             (0x02, "Motor / encoder"),
+             (0x04, "Công tắc / stepper")]
 from printer import print_run_qr, printer_available
 from settings import settings
 
@@ -341,6 +346,7 @@ class Controller:
         should_finish = False
         finish_reason = None
         should_nomotor = False
+        should_sensor = False
         should_linklost = False
         with self._lock:
             self._status, event = parse_line(line, self._status)
@@ -359,7 +365,12 @@ class Controller:
                 self._warning = errors.err("MCU-08"); self._warning_ts = time.monotonic()
             # v6.4: motor commanded but encoder never turned -> abort FAST with a clear
             # "Motor not running — turn on motor power" (MCU-06), not the 13s STALL path.
-            if self._recording and event == "nomotor" and not self._finishing:
+            if self._recording and event == "sensor" and not self._finishing:
+                # v29: firmware chưa nhận được lá nào (cardCount==0 sau 13s) -> cảm biến D4
+                #   chết/tuột dây HOẶC khay bài rỗng. Abort mẻ ngay + báo lỗi rõ (MCU-11).
+                self._finishing = True
+                should_sensor = True
+            elif self._recording and event == "nomotor" and not self._finishing:
                 self._finishing = True
                 should_nomotor = True
             elif self._recording and event in ("done", "stall") and not self._finishing:
@@ -379,7 +390,10 @@ class Controller:
                 self._homing = False
                 logger.info("stepper đã chạm công tắc top -> home xong, mở START")
         self._status_evt.set()
-        if should_nomotor:
+        if should_sensor:
+            logger.warning("firmware err=SENSOR: chua nhan duoc la nao (cam bien D4 chet / het la dau me)")
+            self._emergency(errors.err("MCU-11"))
+        elif should_nomotor:
             self._emergency(errors.err("MCU-06"))
         elif should_linklost:
             logger.warning("firmware err=LINK (deadman) -> abort mẻ (mất liên lạc khi đang chạy)")
@@ -796,9 +810,18 @@ class Controller:
                 "target": self._target,
                 "online": self._online,
                 "connected": self._link.connected,
+                # v28.4: camera CÓ cắm vào Pi không (tín hiệu phần cứng cho icon). Rẻ: chỉ check
+                #   TỒN TẠI device (KHÔNG mở -> không xung đột Recorder lúc đang quay). FAKE -> coi như có.
+                "camera": bool(os.environ.get("CARD_FAKE_CAMERA")) or os.path.exists(settings.camera.device),
+                # v29: latch phần cứng từ firmware -> tên để UI làm MỜ chip + liệt kê popup + chặn START.
+                "hw_faults": [name for bit, name in _HW_NAMES
+                              if int(getattr(self._status, "hw", 0)) & bit],
                 # v28.2: True = stepper đang chạm công tắc top (home chuẩn) -> UI mở START.
                 # Sim/firmware cũ không có cờ lim -> parser mặc định True (hành vi cũ giữ nguyên).
-                "homed": bool(getattr(self._status, "homed", True)),
+                # v29: BẤT KỲ latch phần cứng nào -> ép homed=False để UI hiện nút HOME (cử chỉ re-arm).
+                #   Nếu không ép, latch lúc cardCount==0 (platform còn ở top, lim=1) sẽ hiện START -> kẹt.
+                "homed": False if int(getattr(self._status, "hw", 0))
+                         else bool(getattr(self._status, "homed", True)),
                 # v28.3: True = user vừa bấm HOME, stepper đang leo về công tắc -> UI hiện "Homing…"
                 "homing": bool(self._homing),
                 "printer": self._printer_ok,
@@ -861,6 +884,10 @@ class Controller:
                 # chưa cho chạy mẻ mới (UI hiện "Processing", nút disabled)
                 return False
             if not self._can_start or self._recording or self._state in ("checking", "warmup", "recording"):
+                return False
+            # v29: còn latch lỗi phần cứng (cảm biến/motor/home) -> chưa cho start.
+            #   (Firmware còn chặn tầng cuối bằng hwFault; UI mờ chip + hiện HOME.)
+            if int(getattr(self._status, "hw", 0)):
                 return False
             # v28.2 HOME-GATING: chưa chạm công tắc top -> KHÔNG start (UI đã mờ nút; đây là
             # backstop tầng service; firmware còn tầng cuối: B1 bị từ chối với err=NOHOME)
