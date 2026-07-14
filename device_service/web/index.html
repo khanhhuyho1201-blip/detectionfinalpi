@@ -365,6 +365,24 @@
   /* scan results */
   .prnList{display:flex;flex-direction:column;gap:8px}
   .prnScanBox>.prnList:not(:empty){padding:.6rem;border-top:1px solid var(--line-soft);gap:6px}
+  /* Popup TOÀN MÀN HÌNH kết quả scan máy in — tối đa 3 tín hiệu/trang + ‹ › lật trang */
+  #prnResults{position:fixed;inset:0;z-index:62;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:clamp(12px,2vmin,20px);
+    background:rgba(11,11,14,.97);backdrop-filter:blur(8px);padding:clamp(16px,3vmin,32px)}
+  #prnResults.open{display:flex}
+  .prnResList{display:flex;flex-direction:column;gap:12px;width:min(560px,92vw)}
+  .prnResList .prnCard{width:100%}
+  .prnResNav{display:flex;align-items:center;justify-content:center;gap:22px;margin-top:6px}
+  .prnResClose{position:absolute;top:clamp(10px,2vmin,20px);right:clamp(12px,2.5vmin,24px);
+    background:none;border:0;color:var(--dim);font-size:2rem;line-height:1;cursor:pointer;padding:8px}
+  html.kiosk .prnResClose{font-size:2.6rem;min-width:64px;min-height:64px;display:flex;align-items:center;justify-content:center}
+  .prnNavBtn{flex-shrink:0;width:2.8rem;height:2.8rem;border-radius:11px;border:1px solid var(--line);
+    background:rgba(255,255,255,.05);color:var(--gold);font-size:1.6rem;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;transition:background .12s}
+  .prnNavBtn:active{background:rgba(217,180,90,.18)}
+  .prnCount{font-size:14px;color:var(--dim);text-align:center;font-family:var(--mono);letter-spacing:.05em;min-width:4em}
+  html.kiosk .prnNavBtn{width:3.4rem;height:3.4rem;font-size:2rem}
+  html.kiosk .prnCount{font-size:17px}
   .prnCard{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;
     background:rgba(255,255,255,.03);border:1px solid var(--line-soft)}
   .prnCard .pc-info{flex:1;min-width:0}
@@ -518,6 +536,18 @@
     html.kiosk .prnCard .pc-sub{font-size:11px}
     html.kiosk .prnAddBtn,html.kiosk .prnPairBtn{min-height:44px;padding:.6rem 1rem;font-size:13px}  /* Add/Pair ≥44px */
     html.kiosk .prnMsg{font-size:12px}
+    /* ── Popup kết quả scan — COMPACT cho màn 3.5" (480×320): 3 card + tiêu đề + nav VỪA KHÍT, không tràn ── */
+    #prnResults{gap:5px;padding:6px 5px 8px}
+    #prnResults .qrfull-title{font-size:1.05rem;margin:0 0 1px}
+    .prnResList{gap:6px;width:min(472px,97.5vw)}  /* bề ngang TO hơn -> card + nút Pair dễ click */
+    #prnResults .prnCard{padding:6px 10px;min-height:0}
+    #prnResults .prnCard .pc-name{font-size:13px;line-height:1.2}
+    #prnResults .prnCard .pc-sub{font-size:10px;line-height:1.15}
+    #prnResults .prnAddBtn,#prnResults .prnPairBtn{min-height:38px;padding:.35rem .85rem;font-size:12px}
+    .prnResNav{gap:12px;margin-top:1px}
+    #prnResults .prnNavBtn{width:2.3rem;height:2.3rem;font-size:1.35rem}
+    #prnResults .prnCount{font-size:13px;min-width:3.4em}
+    html.kiosk .prnResClose{font-size:1.7rem;min-width:36px;min-height:36px;top:1px;right:5px;padding:2px}
   }
 
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -945,6 +975,18 @@
   <div class="qrframe" id="enrollCode"></div>
 </div>
 
+<!-- Popup TOÀN MÀN HÌNH: kết quả scan máy in (WiFi/LAN + Bluetooth) — tối đa 3 tín hiệu/trang + ‹ › -->
+<div id="prnResults">
+  <button class="prnResClose" id="prnResClose" aria-label="Close">✕</button>
+  <p class="qrfull-title" id="prnResTitle">Printers</p>
+  <div class="prnResList" id="prnResList"></div>
+  <div class="prnResNav" id="prnResNav">
+    <button class="prnNavBtn" id="prnResPrev" aria-label="Previous">‹</button>
+    <span class="prnCount" id="prnResCount"></span>
+    <button class="prnNavBtn" id="prnResNext" aria-label="Next">›</button>
+  </div>
+</div>
+
 <!-- Error popup: hard failures show here, front-and-center, with the resolving action -->
 <div class="errov" id="errov">
   <div class="errbox">
@@ -1183,7 +1225,11 @@
     if(elPrn) elPrn.className="statico"+(s.printer?"":" off");
     // Arduino serial link — v28.2: mờ icon cả khi CHƯA HOME (chưa chạm công tắc top =
     // đang có vấn đề cơ khí / đang tự home) để user thấy tín hiệu máy chưa sẵn sàng.
-    if(elArd) elArd.className="statico"+((s.connected && s.homed!==false)?"":" off");
+    // Chip SÁNG khi kết nối phần cứng + (đã home HOẶC ĐANG CHẠY mẻ). Lúc chạy platform hạ khỏi
+    //   công tắc top -> homed=false BÌNH THƯỜNG, KHÔNG được làm mờ chip. Chỉ mờ khi: mất kết nối,
+    //   hoặc (đứng yên + chưa home -> báo user bấm HOME). [fix 2026-07-14]
+    var _hwRun=(s.state==="checking"||s.state==="warmup"||s.state==="recording"||s.state==="uploading");
+    if(elArd) elArd.className="statico"+((s.connected && (s.homed!==false || _hwRun))?"":" off");
     var nt=s.target||0; if(nt!==target){target=nt;lastFrac=-1;} want=s.count||0; setCount(want); setVal();
     elTarget.textContent=s.target?s.target:"";
     // camera feed shown during warmup + recording + uploading
@@ -1552,6 +1598,7 @@
     // Overlay open/close
     function openPrn(o){
       $("prnov").classList.toggle("open",o);
+      if(!o) closeResults();            // đóng panel Settings -> đóng luôn popup kết quả scan (nếu mở)
       if(o){
         loadPrinterStatus();
         $("prnListWifi").innerHTML=""; $("prnListBt").innerHTML="";
@@ -1655,9 +1702,10 @@
         if(!d.printers||!d.printers.length) return;
         var fresh=d.printers.filter(function(p){return !_isConfigured(p);});
         if(!fresh.length) return;
-        fresh.forEach(function(p){
-          list.appendChild(mkCard(p.name,p.uri||p.host,function(){confirmChangePrinter(p.name,function(){addByUri(p);});},"prnAddBtn"));
-        });
+        showResults("Printers found", fresh.map(function(p){
+          return {name:p.name, sub:p.uri||p.host, btnCls:"prnAddBtn", btnTxt:"Add",
+                  onPick:function(){ confirmChangePrinter(p.name,function(){addByUri(p);}); }};
+        }));
       }).catch(function(){btn.disabled=false;btn.textContent="Scan network";msg("Scan failed","err");});
     });
 
@@ -1671,21 +1719,20 @@
         if(!d.devices||!d.devices.length) return;
         var fresh=d.devices.filter(function(dev){return !_isConfigured({mac:dev.mac});});
         if(!fresh.length) return;
-        fresh.forEach(function(dev){
-          var card=mkCard(dev.name,dev.mac,null,"prnPairBtn","Pair");
-          card.querySelector(".prnPairBtn").addEventListener("click",function(){
-            var pb=this;
-            confirmChangePrinter(dev.name,function(){
-              pb.disabled=true; pb.textContent="Pairing…";
-              fetch("/api/printer/bt/pair",{method:"POST",headers:{"Content-Type":"application/json"},
-                body:JSON.stringify({mac:dev.mac})}).then(function(r){return r.json();}).then(function(r){
-                if(r.ok){pb.textContent="Paired ✓"; addCfg({backend:"escpos_bt",bt_mac:dev.mac,device:"/dev/rfcomm0",name:dev.name});}
-                else{pb.disabled=false;pb.textContent="Pair";msg(r.error||"Pairing failed","err");}
-              }).catch(function(){pb.disabled=false;pb.textContent="Pair";msg("Error","err");});
-            });
-          });
-          list.appendChild(card);
-        });
+        showResults("Bluetooth devices", fresh.map(function(dev){
+          return {name:dev.name, sub:dev.mac, btnCls:"prnPairBtn", btnTxt:"Pair",
+            onPick:function(){
+              var pb=this;                       // nút Pair vừa bấm (mkCard gọi onPick với this=button)
+              confirmChangePrinter(dev.name,function(){
+                pb.disabled=true; pb.textContent="Pairing…";
+                fetch("/api/printer/bt/pair",{method:"POST",headers:{"Content-Type":"application/json"},
+                  body:JSON.stringify({mac:dev.mac})}).then(function(r){return r.json();}).then(function(r){
+                  if(r.ok){pb.textContent="Paired ✓"; addCfg({backend:"escpos_bt",bt_mac:dev.mac,device:"/dev/rfcomm0",name:dev.name});}
+                  else{pb.disabled=false;pb.textContent="Pair";msg(r.error||"Pairing failed","err");}
+                }).catch(function(){pb.disabled=false;pb.textContent="Pair";msg("Error","err");});
+              });
+            }};
+        }));
       }).catch(function(){btn.disabled=false;btn.textContent="Scan Bluetooth";msg("Scan failed","err");});
     });
 
@@ -1713,6 +1760,31 @@
       c.appendChild(b); return c;
     }
 
+    // CAROUSEL kết quả scan: hiện 1 máy in/lần + nút ‹ › để LƯỚT BẰNG CLICK (không cần vuốt
+    //   tay — màn cảm ứng điện trở vuốt rất lag). items=[{name,sub,btnCls,btnTxt,onPick}].
+    // Popup TOÀN MÀN HÌNH kết quả scan: tối đa 3 tín hiệu/trang + ‹ › lật trang.
+    //   items = [{name, sub, btnCls, btnTxt, onPick}].
+    function showResults(title, items){
+      if(!items.length) return;             // rỗng -> không mở (im lặng như tab cũ)
+      var page=0, per=3, pages=Math.ceil(items.length/per);
+      $("prnResTitle").textContent=title;
+      function draw(){
+        var el=$("prnResList"); el.innerHTML="";
+        items.slice(page*per, page*per+per).forEach(function(it){
+          el.appendChild(mkCard(it.name,it.sub,it.onPick,it.btnCls,it.btnTxt));
+        });
+        if(pages>1){ $("prnResNav").style.display="flex"; $("prnResCount").textContent=(page+1)+" / "+pages; }
+        else { $("prnResNav").style.display="none"; }
+      }
+      $("prnResPrev").onclick=function(){ page=(page-1+pages)%pages; draw(); };
+      $("prnResNext").onclick=function(){ page=(page+1)%pages; draw(); };
+      draw();
+      $("prnResults").classList.add("open");
+    }
+    function closeResults(){ $("prnResults").classList.remove("open"); }
+    $("prnResClose").addEventListener("click",closeResults);
+    $("prnResults").addEventListener("click",function(e){ if(e.target===this) closeResults(); });
+
     function addByUri(p){
       var uri=p.uri||"", cfg={name:p.name};
       // v28.3: DÙNG backend BE khuyến nghị (classify theo tên+IPP) thay vì đoán mù theo scheme.
@@ -1730,7 +1802,7 @@
     function addCfg(cfg){
       fetch("/api/printer/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)})
         .then(function(r){return r.json();}).then(function(d){
-          if(d.ok){loadPrinterStatus(); openPrn(false);}
+          if(d.ok){closeResults(); loadPrinterStatus(); openPrn(false);}
           else msg(d.error||"Failed","err");
         }).catch(function(){msg("Error","err");});
     }
