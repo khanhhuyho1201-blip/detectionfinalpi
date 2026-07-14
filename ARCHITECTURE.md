@@ -37,7 +37,7 @@ Người bấm START (web/index.html)
 | **`device_service/printer.py`** | In QR (chỉ QR = run_id UUID, không chữ) | Đổi backend máy in (ESC/POS↔Brother) chỉ thêm class, không đụng logic. |
 | **`device_service/errors.py`** | **Nguồn DUY NHẤT** mọi mã lỗi/cảnh báo | Thêm/sửa mã lỗi ở đây. Mỗi mã (SRV-/CAM-/MCU-/UPL-/SYS-) map sang 1 group hiện trên FE. |
 | **`device_service/web/index.html`** | Giao diện kiosk (1 file, ~105KB) | Đổi UI/JS. Gọi các API `/api/state`, `/api/print`, `/api/history`… phải khớp `server.py`. |
-| **`button_start_stop/arduino/Test.ino`** | **Firmware** motor + đếm lá | Xem README riêng trong thư mục đó. Rủi ro CAO — sửa sai làm kẹt/không đếm. |
+| **`button_start_stop/arduino/production.ino`** | **Firmware** motor + đếm lá | Xem README riêng trong thư mục đó. Rủi ro CAO — sửa sai làm kẹt/không đếm. |
 
 ---
 
@@ -96,7 +96,7 @@ Người bấm START (web/index.html)
 
 | Muốn đổi… | Sửa ở |
 |---|---|
-| Tốc độ motor | `Test.ino` (nhiều hằng số tốc) + `F0` + nạp lại — xem README firmware |
+| Tốc độ motor | `production.ino` (nhiều hằng số tốc) + `F0` + nạp lại — xem README firmware |
 | Số lá mục tiêu | Server (`start_run` trả `target`) — KHÔNG hardcode ở Pi |
 | Ngưỡng lỗi/cảnh báo hiển thị | `errors.py` |
 | Giao diện / nút | `device_service/web/index.html` (+ endpoint `server.py`) |

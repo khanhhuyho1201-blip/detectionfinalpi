@@ -33,6 +33,8 @@ ERR_CLUMP = "CLUMP"
 ERR_STALL = "STALL"
 ERR_LIMIT = "LIMIT"
 ERR_NOMOVE = "NOMOVE"   # v6.4: motor commanded but encoder not turning (no motor power / jammed)
+ERR_NOHOME = "NOHOME"   # v28.2: B1 refused — platform not touching the top limit switch
+ERR_LINK = "LINK"       # v28.3: firmware deadman fired — Pi link lost while running (motor stopped)
 
 
 @dataclass
@@ -44,6 +46,9 @@ class MachineStatus:
     speed: int = 0          # informational (PWM / leaves-per-min, firmware-defined)
     connected: bool = False
     last_line: str = ""
+    # v28.2 HOME-GATING: True = platform touching the top limit switch (safe to start).
+    # Default True so the simulator and older firmware (no lim= field) keep working.
+    homed: bool = True
 
     def copy(self) -> "MachineStatus":
         return replace(self)
@@ -90,8 +95,16 @@ def parse_line(line: str, st: MachineStatus) -> tuple[MachineStatus, str]:
             s.speed = _to_int(kv["spd"], s.speed)
         if "err" in kv:
             s.error = kv["err"].upper()
-            if s.error not in (ERR_NONE, ERR_CLUMP, ERR_STALL, ERR_LIMIT, ERR_NOMOVE):
+            if s.error not in (ERR_NONE, ERR_CLUMP, ERR_STALL, ERR_LIMIT, ERR_NOMOVE, ERR_NOHOME, ERR_LINK):
                 s.error = ERR_NONE
+        # v28.2: lim=1 -> touching top switch (homed); lim=0 -> not homed, START must be gated
+        # [review v28.3] Firmware CŨ (trước v28.2) không có field lim -> ST không kèm 'lim='.
+        #   Khi đó KHÔNG gate (homed=True) để tránh khoá cứng START vĩnh viễn nếu lỡ nạp lại
+        #   firmware cũ. Firmware mới luôn gửi lim= -> gate bình thường theo mức 0/1.
+        if "lim" in kv:
+            s.homed = kv["lim"].strip() == "1"
+        else:
+            s.homed = True
         # firmware flags a real-time clump via err=CLUMP while still RUN —
         # surface it as a transient warning (yellow) without ending the batch.
         if s.error == ERR_CLUMP and s.state == RUN:

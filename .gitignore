@@ -25,3 +25,7 @@ card_device/*.bak.*
 
 # ── OS ──
 .DS_Store
+
+# backup dirs/files kiểu .bak_pair_..., .index.bak_popup
+.bak_*/
+*.bak_*

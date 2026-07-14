@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-batch_log.py — Hung log 1 me feed tu Arduino Uno (Test.ino) de phan tich PWM-vs-so-la.
+batch_log.py — Hung log 1 me feed tu Arduino Uno (production.ino) de phan tich PWM-vs-so-la.
   - CHI NGHE serial (khong tu bat motor). Anh bat cong tac A0 nhu binh thuong.
   - Luu MOI dong kem timestamp ra file, dong thoi in ra man hinh.
   - Tu nhan dien ket me (STALL/DONE), roi gui lenh 'G' lay bang DIAG theo vung 50 la.

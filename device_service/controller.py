@@ -23,7 +23,7 @@ import time
 import errors
 from api_client import APIClient
 from camera import TMP_DIR, Recorder, delete_video, probe as camera_probe
-from parser import MachineStatus, parse_line
+from parser import MachineStatus, parse_line, ERR_LINK
 from printer import print_run_qr, printer_available
 from settings import settings
 
@@ -174,6 +174,10 @@ class Controller:
         self._test_preview = None              # xem thử camera khi idle (TestPreview)
         self._test_last_access = 0.0
         self._last_serial_ts = 0.0
+        # v28.3 MANUAL HOME: True = user vừa bấm HOME, stepper đang leo về công tắc top.
+        #   Tắt khi ST báo homed (lim=1) hoặc hết timeout. UI hiện "Homing…" trong lúc này.
+        self._homing = False
+        self._homing_ts = 0.0
 
         # ── QR auto-print ──
         self._printer_ok = False                 # cached (refreshed by the poll loop)
@@ -204,11 +208,21 @@ class Controller:
         # mỗi 5s + bị probe máy in đẩy trễ). Giữ setup=True tới khi AP lên thật/nối xong.
         self._wifi_setup_pending_until = 0.0
 
+        # QR-scan pairing (un-enrolled device only): {code, server_url, status,
+        # error} | None. status: pending → done (claimed & saved) / expired.
+        self._pair = None
+
         self._client = self._make_client()
         self._link = SerialLink(on_line=self._on_serial_line)
         self._link.start()
+        # v28.3: phần cứng THẬT -> mặc định "CHƯA home" (vị trí platform lúc boot không rõ:
+        #   có thể vừa mất điện giữa mẻ). UI hiện nút HOME tới khi ST đầu tiên báo lim=1.
+        #   Sim vẫn homed=True (parser mặc định) -> START luôn sẵn, không đổi hành vi cũ.
+        if not self._link.is_sim:
+            self._status.homed = False
         self._start_heartbeat()
         self._start_watchdog()
+        self._start_heartbeat_deadman()   # v28.3: nuôi deadman firmware lúc motor chạy
         self._start_run_poll()        # printer status + auto-print QR on AI done
         self._scan_pending()          # SYS-04: leftover video from a previous run
 
@@ -327,6 +341,7 @@ class Controller:
         should_finish = False
         finish_reason = None
         should_nomotor = False
+        should_linklost = False
         with self._lock:
             self._status, event = parse_line(line, self._status)
             if self._recording:
@@ -351,9 +366,24 @@ class Controller:
                 self._finishing = True
                 should_finish = True
                 finish_reason = event
+            # [review v28.3] Firmware deadman đã DỪNG motor (mất liên lạc Pi khi đang chạy) ->
+            #   ST báo err=LINK. Abort mẻ NGAY tại đây thay vì đợi watchdog MCU-04 (~8s im lặng).
+            elif (self._recording and event == "st" and self._status.error == ERR_LINK
+                  and not self._finishing):
+                self._finishing = True
+                should_linklost = True
+            # v28.3 MANUAL HOME (KHÔNG auto): chỉ CẬP NHẬT cờ homed. Khi stepper đã chạm công tắc
+            #   top (lim=1) thì tắt trạng thái "đang home". TUYỆT ĐỐI không tự gửi lệnh home —
+            #   user phải bấm nút HOME để BIẾT + tự phát hiện stepper lỗi (yêu cầu của anh).
+            if event == "st" and self._homing and self._status.homed:
+                self._homing = False
+                logger.info("stepper đã chạm công tắc top -> home xong, mở START")
         self._status_evt.set()
         if should_nomotor:
             self._emergency(errors.err("MCU-06"))
+        elif should_linklost:
+            logger.warning("firmware err=LINK (deadman) -> abort mẻ (mất liên lạc khi đang chạy)")
+            self._emergency(errors.err("MCU-04"))
         elif should_finish:
             threading.Thread(target=self._auto_finish, args=(finish_reason,), daemon=True).start()
 
@@ -376,14 +406,78 @@ class Controller:
     # even though the hardware was fine. _last_serial_ts is reset right before B1.
     def _start_watchdog(self):
         def loop():
+            tick = 0
             while True:
                 time.sleep(1.0)
+                tick += 1
                 if (self._state == "recording" and not self._finishing and self._last_serial_ts
                         and (time.monotonic() - self._last_serial_ts) > SERIAL_WATCHDOG):
-                    self._finishing = True
+                    with self._lock:                       # [review v28.3] ghi _finishing trong lock (đua với writer khác)
+                        self._finishing = True
                     logger.warning("serial watchdog tripped -> MCU-04")
                     self._emergency(errors.err("MCU-04"))
+                # v28.3: home quá lâu vẫn chưa chạm công tắc (stepper kẹt/lỗi / công tắc hỏng)
+                # -> thôi trạng thái "đang home" để UI hiện lại nút HOME cho user thử lại/kiểm tra.
+                if self._homing and (time.monotonic() - self._homing_ts) > 60.0:
+                    with self._lock:                       # [review v28.3] ghi _homing trong lock
+                        self._homing = False
+                    logger.warning("home quá 60s chưa chạm công tắc top -> huỷ trạng thái homing")
+                # v28.2 HOME-GATING: lúc RẢNH firmware im lặng (ST chỉ stream khi RUN) ->
+                # poll S mỗi 3s để luôn biết lim (chạm công tắc top?) -> UI mở nút START/HOME
+                # realtime. Không poll khi đang home (firmware bận blocking ~30s).
+                if (tick % 3 == 0 and not self._recording and not self._homing
+                        and not self._link.is_sim and self._link.connected
+                        and self._state not in ("checking", "warmup", "recording", "uploading")):
+                    try:
+                        self._link.send("S")
+                    except Exception:
+                        pass
         threading.Thread(target=loop, daemon=True).start()
+
+    # ── v28.3 DEADMAN heartbeat: lúc motor ĐANG QUAY, gửi 1 byte mỗi ~400ms để firmware
+    #    biết Pi còn sống. Pi treo/chết -> ngừng heartbeat -> firmware DỪNG MOTOR trong <1.5s.
+    #    Gửi "\n" (dòng rỗng) — firmware chỉ cập nhật mốc nhận, không tốn thời gian phản hồi.
+    def _start_heartbeat_deadman(self):
+        def loop():
+            while True:
+                time.sleep(0.4)
+                if (self._state == "recording" and not self._link.is_sim
+                        and self._link.connected):
+                    try:
+                        self._link.send("")     # send() sẽ ghi "\n"
+                    except Exception:
+                        pass
+        threading.Thread(target=loop, daemon=True).start()
+
+    # ── v28.3 MANUAL HOME: user bấm nút HOME/RESET -> stepper leo về chạm công tắc top ──
+    def home(self):
+        with self._lock:
+            if self._recording or self._state in ("checking", "warmup", "recording", "uploading"):
+                return False
+            if self._link.is_sim:
+                return False
+            if not self._link.connected:
+                return False
+            # [review v28.3] đang home rồi -> KHÔNG gửi H trùng (chống queue lệnh + re-arm 60s timeout)
+            if self._homing:
+                return False
+            self._homing = True
+            self._homing_ts = time.monotonic()
+        logger.info("user bấm HOME -> gửi lệnh H (stepper leo về công tắc top)")
+        # [review v28.3 CONFIRMED] Gửi H THẤT BẠI (link rớt đúng lúc) mà vẫn để _homing=True
+        #   -> watchdog ngừng poll lim 60s, START khoá 60s cho lần home KHÔNG hề chạy.
+        #   -> bắt kết quả send: thất bại thì HOÀN TÁC _homing ngay, trả False.
+        ok = False
+        try:
+            ok = self._link.send("H")
+        except Exception:
+            ok = False
+        if not ok:
+            with self._lock:
+                self._homing = False
+            logger.warning("gửi H thất bại -> huỷ trạng thái homing (START không bị khoá oan)")
+            return False
+        return True
 
     def _emergency(self, err_obj):
         """Abort a RUNNING batch (discard video) with the given error."""
@@ -589,6 +683,14 @@ class Controller:
                 logger.warning("await-result run %s ended %s -> unlock Start", rid, status)
                 self._await_result = None
             self._seen_status[rid] = status
+        # [review v28.3] CHỐNG PHÌNH RAM 24/7: _seen_status/_await_adopted tích run_id vô hạn.
+        #   Server chỉ trả các run GẦN ĐÂY -> tỉa 2 tập này về đúng cửa sổ đó (run cũ rớt khỏi
+        #   danh sách thì không cần nhớ nữa). Giữ lại run đang chờ kết quả nếu còn hiệu lực.
+        current_ids = {r.get("run_id") for r in runs if r.get("run_id")}
+        if self._await_result:
+            current_ids.add(self._await_result)
+        self._seen_status = {k: v for k, v in self._seen_status.items() if k in current_ids}
+        self._await_adopted &= current_ids
 
     def ack_print_prompt(self):
         """UI đã xử lý popup (đồng ý/từ chối) — xóa prompt; CHỈ mở khóa Start nếu
@@ -694,6 +796,11 @@ class Controller:
                 "target": self._target,
                 "online": self._online,
                 "connected": self._link.connected,
+                # v28.2: True = stepper đang chạm công tắc top (home chuẩn) -> UI mở START.
+                # Sim/firmware cũ không có cờ lim -> parser mặc định True (hành vi cũ giữ nguyên).
+                "homed": bool(getattr(self._status, "homed", True)),
+                # v28.3: True = user vừa bấm HOME, stepper đang leo về công tắc -> UI hiện "Homing…"
+                "homing": bool(self._homing),
                 "printer": self._printer_ok,
                 "wifi": self._wifi,        # {setup, connected, signal, ssid}
                 "session": self._session,
@@ -706,6 +813,10 @@ class Controller:
                 "awaiting_result": bool(self._await_result),
                 # true = admin khoá từ xa → UI phủ màn hình khoá fullscreen
                 "locked": self._server_locked,
+                # QR-scan enroll: chưa có credentials → UI hiện QR để điện thoại
+                # super-admin quét & tạo máy. pair = {code, server_url, status}.
+                "enrolled": bool(self._client),
+                "pair": self._pair,
             }
 
     def preview_jpeg(self):
@@ -750,6 +861,13 @@ class Controller:
                 # chưa cho chạy mẻ mới (UI hiện "Processing", nút disabled)
                 return False
             if not self._can_start or self._recording or self._state in ("checking", "warmup", "recording"):
+                return False
+            # v28.2 HOME-GATING: chưa chạm công tắc top -> KHÔNG start (UI đã mờ nút; đây là
+            # backstop tầng service; firmware còn tầng cuối: B1 bị từ chối với err=NOHOME)
+            if not getattr(self._status, "homed", True):
+                return False
+            # [review v28.3] đang home dở (stepper đang leo về công tắc) -> chưa cho start
+            if self._homing:
                 return False
             self._can_start = False
             self._recording = True
@@ -1308,7 +1426,7 @@ class Controller:
         """Bật AP cài WiFi (chạy nền, không chặn). Cần sudoers NOPASSWD cho
         wifi_ap.sh (xem /etc/sudoers.d/card-wifi)."""
         here = os.path.dirname(os.path.abspath(__file__))
-        ap = os.path.join(here, "wifi_ap.sh")
+        ap = os.path.join(here, "wifi", "wifi_ap.sh")  # [gom folder 2026-07] wifi_ap.sh chuyển vào device_service/wifi/
 
         # Truyền CARD_AP_SSID qua sudo bằng wrapper env — sudo strip env mặc định,
         # nếu không SSID AP sẽ về default "CardFeeder-XXXX" trong khi QR trên màn
@@ -1326,6 +1444,113 @@ class Controller:
             except Exception as e:
                 logger.warning("không bật được AP: %s", e)
         threading.Thread(target=th, daemon=True).start()
+
+    # ── QR-scan pairing (un-enrolled device) ──────────────────────────────────
+    # The device shows a QR "CMDPAIR:<code>"; a super-admin scans it on their
+    # phone, names the machine, and the server hands back credentials which the
+    # background poll picks up and saves — no typing on the device.
+    @staticmethod
+    def _http_json(method, url, payload):
+        import urllib.request
+        data = None
+        # A real User-Agent is REQUIRED: the pairing server sits behind Cloudflare
+        # (cmdtest.berp.vn), which 403s urllib's default "Python-urllib/*" UA.
+        headers = {"Accept": "application/json",
+                   "User-Agent": "Mozilla/5.0 (X11; Linux aarch64) CardDevice/1.0"}
+        if payload is not None:
+            data = json.dumps(payload).encode()
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return json.loads(r.read().decode())
+
+    def begin_pairing(self):
+        """Start (or return the existing) QR pairing session. Idempotent. Refuses
+        if the device is already enrolled — so calling it on a live machine is a
+        safe no-op that never overwrites credentials."""
+        with self._lock:
+            if self._client:
+                return {"ok": False, "enrolled": True}
+            if self._pair and self._pair.get("status") == "pending":
+                return {"ok": True, **self._pair}
+            import secrets
+            code = "P" + secrets.token_urlsafe(18)   # ~25 chars, high entropy
+            self._pair = {"code": code,
+                          "server_url": settings.enroll.pair_server_url,
+                          "status": "pending", "error": None}
+        threading.Thread(target=self._pair_loop, args=(code,), daemon=True).start()
+        with self._lock:
+            return {"ok": True, **(self._pair or {})}
+
+    def pairing_status(self):
+        with self._lock:
+            return {"enrolled": bool(self._client), "pair": self._pair}
+
+    def _pair_loop(self, code):
+        from urllib.error import HTTPError
+        import socket
+        base = settings.enroll.pair_server_url.rstrip("/")
+        hint = socket.gethostname()
+
+        def announce():
+            try:
+                self._http_json("POST", base + "/api/device/pair/announce",
+                                {"pair_code": code, "name_hint": hint})
+            except Exception as e:
+                logger.warning("pair announce failed: %s", e)
+
+        announce()
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
+            with self._lock:
+                # superseded by a newer code, or already enrolled → stop
+                if not self._pair or self._pair.get("code") != code or self._client:
+                    return
+            try:
+                data = self._http_json("GET", base + "/api/device/pair/" + code, None)
+            except HTTPError as he:
+                data = None
+                if he.code == 404:   # server lost the pending code (restart) → re-announce
+                    announce()
+            except Exception:
+                data = None
+            if data and data.get("status") == "claimed":
+                creds = {"server_url": data.get("server_url") or base,
+                         "device_id": data.get("device_id"),
+                         "device_key": data.get("device_key")}
+                if creds["device_id"] and creds["device_key"]:
+                    self._apply_pair_creds(code, creds)
+                    return
+            time.sleep(2.0)
+        with self._lock:
+            if self._pair and self._pair.get("code") == code:
+                self._pair["status"] = "expired"
+
+    def _apply_pair_creds(self, code, creds):
+        """Claimed → save credentials.json, rebuild the API client, verify the
+        heartbeat. Mirrors enroll() so the 'online' badge lights immediately."""
+        try:
+            settings.credentials.save(creds)
+            client = APIClient(creds["server_url"], creds["device_id"], creds["device_key"])
+            with self._lock:
+                self._client = client
+                if (self._state == "failed" and self._error
+                        and self._error.get("code") == "SRV-05"):
+                    self._error = None
+                    self._state = "idle"
+                self._pair = {"code": code, "server_url": creds["server_url"],
+                              "status": "done", "error": None}
+            try:
+                self._online = bool(client.heartbeat())
+            except Exception:
+                pass
+            logger.info("device paired & enrolled via QR: %s", creds["device_id"])
+        except Exception as e:
+            logger.warning("apply pair creds failed: %s", e)
+            with self._lock:
+                if self._pair and self._pair.get("code") == code:
+                    self._pair["status"] = "pending"
+                    self._pair["error"] = str(e)[:120]
 
     def enroll(self, server_url, device_id, setup_token):
         if not (server_url and device_id and setup_token):

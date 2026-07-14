@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Card Feeder (kiosk)
+Exec=/home/bbsw/.local/bin/card-feeder-launch.sh
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

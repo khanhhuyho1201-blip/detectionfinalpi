@@ -37,7 +37,7 @@ sudo apt install -y ffmpeg v4l-utils chromium wlr-randr python3-venv
 | Thư mục / file | Vai trò | README chi tiết |
 |---|---|---|
 | `device_service/` | **App chính**: Flask server (`server.py`), điều khiển (`controller.py`), serial (`serial_link.py`), parse (`parser.py`), camera, upload, in QR | `device_service/WIFI_SETUP_README.md`, `FE_STATUS_SPEC.md`, `BA_error_catalog.md` |
-| `button_start_stop/` | Bản trước của app + **firmware Arduino** trong `arduino/Test.ino` | `button_start_stop/README.md`, **`arduino/README.md`** (nạp firmware + tốc độ), `PROTOCOL.md`, `ARDUINO_CHANGES.md` |
+| `button_start_stop/` | Bản trước của app + **firmware Arduino** trong `arduino/production.ino` | `button_start_stop/README.md`, **`arduino/README.md`** (nạp firmware + tốc độ), `PROTOCOL.md`, `ARDUINO_CHANGES.md` |
 | `code/` | Script phụ (detect camera…) | — |
 | `weight/` | Model YOLO / trọng số dùng cục bộ | — |
 | `card_device/` | File runtime của thiết bị (credentials, speed_model.json, printer.json…) — **KHÔNG commit dữ liệu nhạy cảm** | — |
@@ -69,7 +69,7 @@ ln -sf .venv venv                  # kiosk.sh trỏ tới ./venv/bin/python
 ./.venv/bin/python -c "import flask, serial, requests, PIL, qrcode; print('OK, đủ thư viện')"
 
 # 2) Nạp firmware Arduino  →  xem button_start_stop/arduino/README.md
-#    (cài arduino-cli nếu Pi mới; stage /tmp/Test; stop service; upload; F0; restart)
+#    (cài arduino-cli nếu Pi mới; stage /tmp/production; stop service; upload; F0; restart)
 
 # 3) Cài + bật service kiosk (systemd USER — KHÔNG dùng sudo)
 #    unit đi kèm repo ở deploy/card-device.service (giả định repo ở ~/workspace,
@@ -95,7 +95,11 @@ systemctl --user stop    card-device.service      # cần khi nạp firmware (nh
 ```
 - Server chạy `device_service/server.py` (WorkingDirectory), lắng ở cổng `8800`.
 - Chromium mở `http://127.0.0.1:8800/` ở chế độ `--kiosk`.
-- Launcher: `device_service/kiosk.sh` (ép mode màn 720x480, dùng `./venv/bin/python`).
+- **Launcher THẬT (máy X11 hiện tại):** `~/.local/bin/card-feeder-launch.sh`
+  (bản gốc lưu ở `screen_setup/kiosk/card-feeder-launch.sh`), chạy qua autostart
+  `screen_setup/kiosk/cardfeeder.desktop`. Toàn bộ setup màn hình/cảm ứng cho **máy
+  mới** xem `screen_setup/SETUP_GUIDE.md`.
+- Launcher Wayland cũ (labwc, không dùng trên máy này): `screen_setup/kiosk/kiosk-wayland.sh`.
 
 **Test app không cần phần cứng** (simulator):
 ```bash
@@ -111,7 +115,7 @@ cd device_service && BSS_SERIAL_PORT=sim python3 server.py
 tham số tốc độ (nhiều tầng sàn governor). Tóm tắt:
 
 - Board: **Arduino Uno**, `/dev/ttyACM0`, 115200 baud, FQBN `arduino:avr:uno`.
-- Nạp: stage sang `/tmp/Test/Test.ino` → compile → **stop service** → upload →
+- Nạp: stage sang `/tmp/production/production.ino` → compile → **stop service** → upload →
   **`F0` reset FF/EEPROM khi đổi tốc** → restart service.
 - Tốc độ: hạ ĐỒNG BỘ `STEADY_SPEED` + `CAD_SPD_LO` + `CAD_LO_LIGHT` (sàn) +
   `CAD_HI_HEAVY`/`CAD_SPD_HI` (trần) + `SPEED_MIN`. Chỉ hạ `STEADY_SPEED` thì

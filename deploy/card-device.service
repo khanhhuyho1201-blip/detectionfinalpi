@@ -3,10 +3,13 @@ Description=Card Feeder — Web kiosk (server.py + Chromium)
 After=graphical-session.target
 Wants=graphical-session.target
 
+# LƯU Ý (2026-07): unit này là model Wayland/labwc CŨ, KHÔNG dùng trên máy X11 hiện tại.
+#   Máy hiện tại chạy autostart 'cardfeeder.desktop' -> '~/.local/bin/card-feeder-launch.sh'
+#   (bản gốc + hướng dẫn setup máy mới: screen_setup/kiosk/ + screen_setup/SETUP_GUIDE.md).
 [Service]
 Type=simple
-WorkingDirectory=/home/bbsw/workspace/device_service
-ExecStart=/bin/bash /home/bbsw/workspace/device_service/kiosk.sh
+WorkingDirectory=/home/bbsw/workspace/detectionfinalpi/device_service
+ExecStart=/bin/bash /home/bbsw/workspace/detectionfinalpi/screen_setup/kiosk/kiosk-wayland.sh
 Restart=on-failure
 RestartSec=5
 # Cần DISPLAY và WAYLAND_DISPLAY để Chromium khởi động trên labwc.

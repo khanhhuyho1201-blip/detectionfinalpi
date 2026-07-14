@@ -1,6 +1,6 @@
-# Phần A — Sửa firmware Arduino (Test.ino)
+# Phần A — Sửa firmware Arduino (production.ino)
 
-> **Trạng thái:** chưa áp được vì `Test.ino` đang nằm trên máy Mac, không có trên
+> **Trạng thái:** chưa áp được vì `production.ino` đang nằm trên máy Mac, không có trên
 > Pi này. Gửi file sang (dán vào chat, hoặc `scp` sang Pi) là mình áp ngay.
 > Tài liệu này là bản vá chính xác mình sẽ thực hiện — giữ nguyên 100% logic cơ
 > khí (PI motor, stepper, đếm lá, phát hiện cụm/kẹt), chỉ thêm cổng điều khiển +

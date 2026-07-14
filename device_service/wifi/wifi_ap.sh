@@ -30,7 +30,11 @@ except Exception:
 PY
 )"
 AP_SSID="${CARD_AP_SSID:-CMD X BBSW}"
-AP_PASS="${CARD_AP_PASS:-cardfeeder}"
+# [FIX MED 2026-07] GHIM mật khẩu AP = "cardfeeder" (1 nguồn duy nhất). QR trong
+#   web/index.html hardcode "cardfeeder"; nếu ở đây cho ${CARD_AP_PASS:-...} rồi ai đó
+#   set CARD_AP_PASS khác -> AP đổi pass mà QR vẫn "cardfeeder" -> điện thoại quét QR
+#   tự nối FAIL (sai pass) mà không báo lỗi rõ. Cần đổi pass thì sửa CẢ 2 nơi.
+AP_PASS="cardfeeder"
 AP_ADDR="10.42.0.1/24"
 AP_IP="10.42.0.1"
 NFT_TABLE="cardfeeder_captive"
@@ -75,7 +79,6 @@ up() {
     # portal chủ yếu đọc CACHE — quét ngay lúc này để cache có đủ mọi mạng đang
     # phát (kể cả hotspot điện thoại vừa bật). Tốn ~3-6s trước khi AP lên.
     timeout 8 nmcli dev wifi list --rescan yes >/dev/null 2>&1 || true
-    _dns_hijack_write
     if _ap_profile_ok; then
         echo "Profile AP đã có — dùng lại"
     else
@@ -95,8 +98,28 @@ up() {
             wifi-sec.pmf optional \
             wifi-sec.psk "$AP_PASS"
     fi
-    nmcli con up "$AP_CON"
-    # Dành một nhịp rất ngắn cho dnsmasq shared mode bám theo AP mới rồi bật captive rules.
+    # RETRY + VERIFY: bật AP tối đa 3 lần, MỖI lần xác minh AP thực sự ACTIVE.
+    #   [FIX CRITICAL 2026-07] Trước đây 'nmcli con up' chạy 1 phát KHÔNG check exit code
+    #   -> up fail (radio bận nối wifi nhà / rfkill / NM chưa ready) mà script vẫn cài
+    #   luật captive + DNS hijack -> AP không lên nhưng mọi HTTP bị ném về 10.42.0.1
+    #   (hỏng cả wifi nhà). Giờ: chỉ bật captive SAU khi AP verified-active; fail thì DỌN SẠCH.
+    local ok=0 i
+    for i in 1 2 3; do
+        if nmcli con up "$AP_CON" >/dev/null 2>&1 \
+           && nmcli -t -f NAME con show --active 2>/dev/null | grep -qx "$AP_CON"; then
+            ok=1; break
+        fi
+        echo "  AP up thử lần $i thất bại -> reset rồi thử lại..." >&2
+        nmcli con down "$AP_CON" >/dev/null 2>&1
+        sleep "$i"          # backoff 1s, 2s, 3s
+    done
+    if [ "$ok" != 1 ]; then
+        captive_off         # DỌN nft + DNS hijack: KHÔNG để lại luật chặn trên wlan0
+        echo "LỖI: AP '$AP_SSID' KHÔNG lên sau 3 lần -> đã dọn captive, thoát 1." >&2
+        exit 1
+    fi
+    # AP đã VERIFIED-ACTIVE -> GIỜ mới ghi DNS hijack + bật captive.
+    _dns_hijack_write
     sleep 0.4
     captive_on
     echo "AP đã bật. SSID=$AP_SSID  PASS=$AP_PASS  Portal=http://10.42.0.1"

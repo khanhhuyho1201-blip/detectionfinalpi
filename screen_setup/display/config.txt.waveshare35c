@@ -1,0 +1,14 @@
+# ── Waveshare 3.5" (waveshare35c) 480x320 SPI — trích từ /boot/firmware/config.txt ──
+# Chép các dòng dưới vào /boot/firmware/config.txt của Pi mới rồi reboot.
+
+#dtparam=spi=on
+display_auto_detect=1
+dtoverlay=dwc2,dr_mode=host
+dtoverlay=nospi10
+dtparam=spi=on
+dtoverlay=waveshare35c,speed=20000000,fps=20
+hdmi_force_hotplug=1
+hdmi_group=2
+hdmi_mode=1
+hdmi_mode=87
+hdmi_cvt 480 320 60 6 0 0 0

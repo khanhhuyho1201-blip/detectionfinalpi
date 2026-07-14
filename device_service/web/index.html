@@ -127,6 +127,10 @@
   html.kiosk .gear .gsym{width:1.62rem;height:1.62rem;display:block;position:relative;top:4px}  /* gear fills its box more → shrink; +4px nudges the <button> glyph down to the <div> icons' baseline */
   html.kiosk .statico svg,html.kiosk .gear .gsym{filter:drop-shadow(0 0 5px currentColor)}
   html.kiosk .statico.off svg{filter:none;opacity:.9}  /* unlit sign: no glow */
+  /* server icon while un-connected → tappable, pulses gold to invite the tap */
+  .statico.needenroll{color:var(--gold)!important;cursor:pointer;animation:enrollpulse 1.4s ease-in-out infinite}
+  .statico.needenroll svg{filter:drop-shadow(0 0 6px var(--gold))!important;opacity:1!important}
+  @keyframes enrollpulse{0%,100%{opacity:1}50%{opacity:.5}}
   html.kiosk .gear{color:var(--gold)}
   html.kiosk #prnStat,html.kiosk #wifiBtn{cursor:pointer}
   /* 3.5" panel: invisible hit-pad around the TAPPABLE icons (printer/wifi/gear) — bigger touch
@@ -153,6 +157,8 @@
   html.kiosk .sr-btn,html.kiosk .run .printbtn,html.kiosk #prnStat,html.kiosk #wifiBtn,
   html.kiosk .reset,html.kiosk .ghostbtn,html.kiosk .close{touch-action:manipulation}
   html.kiosk body,html.kiosk .stage{overscroll-behavior:none}
+  /* Máy kiosk Pi (cảm ứng) -> ẩn hẳn con trỏ chuột ở mọi phần tử. Máy khác vẫn có chuột. */
+  html.touchpanel, html.touchpanel *{cursor:none !important}
   /* Clear "your touch landed" feedback — brighten + press-scale so it reads even
      when the finger contact is small/jittery on the 3.5" panel. */
   html.kiosk .btn:active,html.kiosk .sr-btn:active,html.kiosk .gear:active,
@@ -371,7 +377,13 @@
   .prnPairBtn{padding:.42rem .9rem;border-radius:9px;border:1px solid var(--blue);
     background:rgba(122,160,238,.08);color:var(--blue);font-size:14px;font-weight:600;cursor:pointer;font-family:var(--sans);flex-shrink:0;transition:background .15s}
   .prnPairBtn:hover{background:rgba(122,160,238,.2)}
-  /* manual entry */
+  /* manual entry — nhập IP tay */
+  .prnManualRow{display:flex;gap:6px;margin-top:8px}
+  .prnManualIp{flex:1;min-width:0;padding:.5rem .7rem;border-radius:9px;border:1px solid var(--line);
+    background:rgba(255,255,255,.04);color:var(--text);font-size:14px;font-family:var(--mono)}
+  .prnManualIp:focus{outline:none;border-color:var(--gold)}
+  html.kiosk .prnManualIp{min-height:44px;font-size:15px}
+  html.kiosk .prnManualRow .prnAddBtn{min-height:44px}
   /* message */
   .prnMsg{font-size:13px;color:var(--dim);min-height:1rem;text-align:center;padding:.1rem 0}
   .prnMsg.ok{color:var(--green)} .prnMsg.err{color:var(--red)}
@@ -589,6 +601,16 @@
     border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:.6em 1.6em;background:rgba(255,255,255,.03)}
   .qrfull-step2-label{font-size:clamp(10px,1.1vmin,13px);color:var(--dim);letter-spacing:.12em;text-transform:uppercase}
   .qrfull-step2-url{font-family:var(--mono);font-size:clamp(15px,2vmin,22px);color:var(--gold);font-weight:600;letter-spacing:.03em}
+  /* ===== Server-enroll overlay (QR pairing: a super-admin's phone scans THIS) ===== */
+  #enrollfull{position:fixed;inset:0;z-index:59;display:none;flex-direction:column;
+    align-items:center;justify-content:center;gap:clamp(8px,1.6vmin,16px);
+    background:rgba(11,11,14,.97);backdrop-filter:blur(8px);padding:clamp(14px,2.5vmin,28px)}
+  #enrollfull.open{display:flex}
+  #enrollfull .qrframe{background:#fff;padding:clamp(8px,1.2vmin,14px);border-radius:16px;line-height:0;
+    box-shadow:0 4px 32px rgba(0,0,0,.5);transition:opacity .3s,filter .3s}
+  /* QR to bằng WiFi Setup (74vmin/600px) — layout y chang: chỉ title + QR */
+  #enrollfull .qrframe canvas{display:block;width:min(74vmin,600px);height:min(74vmin,600px);image-rendering:pixelated}
+  #enrollfull.done .qrframe{opacity:.2;filter:grayscale(1)}
   /* WiFi signal indicator in the topbar — display only, NOT clickable */
   .wifiind{display:inline-flex;align-items:flex-end;gap:2px;height:16px;padding:3px 3px;
     pointer-events:none;cursor:default}
@@ -901,6 +923,12 @@
       <div class="prnScanBox">
         <button class="prnActBtn" id="prnScanWifi">Scan network</button>
         <div class="prnList" id="prnListWifi"></div>
+        <!-- Nhập IP tay: cho máy in mạng KHÔNG auto-discover (thermal raw :9100 im lặng mDNS) -->
+        <div class="prnManualRow">
+          <input id="prnManualIp" class="prnManualIp" type="text" inputmode="decimal"
+                 placeholder="Add by IP (e.g. 192.168.1.50)" autocomplete="off" spellcheck="false">
+          <button class="prnAddBtn" id="prnManualAdd">Add</button>
+        </div>
       </div>
     </div>
 
@@ -921,6 +949,13 @@
 <div id="qrfull">
   <p class="qrfull-title">WiFi Setup</p>
   <div class="qrframe" id="qrfullCode"></div>
+</div>
+
+<!-- Server pairing overlay: shown on an un-enrolled device once WiFi is up.
+     A super-admin scans this QR on their phone to create & connect the machine. -->
+<div id="enrollfull">
+  <p class="qrfull-title">Connect to Server</p>
+  <div class="qrframe" id="enrollCode"></div>
 </div>
 
 <!-- Error popup: hard failures show here, front-and-center, with the resolving action -->
@@ -1006,6 +1041,10 @@
   // Always kiosk: this page IS the device UI — identical on the panel and in any
   // browser (camera frame hidden, 2-column touch layout) so preview == device.
   document.documentElement.classList.add("kiosk");
+  // Ẩn con trỏ chuột CHỈ trên máy kiosk Pi (phục vụ ở 127.0.0.1, cảm ứng — không cần
+  // con trỏ). Xem từ Chrome máy khác (LAN IP) VẪN có chuột bình thường.
+  if(location.hostname==="127.0.0.1"||location.hostname==="localhost")
+    document.documentElement.classList.add("touchpanel");
   var reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
   var $=function(id){return document.getElementById(id);};
   var stage=document.querySelector(".stage");
@@ -1031,6 +1070,51 @@
   QRBitBuffer.prototype={get:function(i){var bi=Math.floor(i/8);return((this.buffer[bi]>>>(7-i%8))&1)==1;},put:function(n,l){for(var i=0;i<l;i++){this.putBit(((n>>>(l-i-1))&1)==1);}},getLengthInBits:function(){return this.length;},putBit:function(b){var bi=Math.floor(this.length/8);if(this.buffer.length<=bi){this.buffer.push(0);}if(b){this.buffer[bi]|=(0x80>>>(this.length%8));}this.length++;}};
   return {create:function(text){for(var tn=1;tn<=10;tn++){try{var m=new QRCodeModel(tn,QRErrorCorrectLevel.M);m.addData(text);m.make();return m;}catch(e){if(tn==10)throw e;}}}};})();
   function renderQR(el,text){el.innerHTML="";if(!text)return;var m;try{m=QRCode.create(text);}catch(e){el.textContent="QR error";return;}var n=m.getModuleCount(),px=6,c=document.createElement("canvas");c.width=c.height=(n+4)*px;var x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,c.width,c.height);x.fillStyle="#000";for(var r=0;r<n;r++)for(var cc=0;cc<n;cc++)if(m.isDark(r,cc))x.fillRect((cc+2)*px,(r+2)*px,px,px);el.appendChild(c);}
+
+  // ── Server pairing overlay (un-enrolled device): show a QR the super-admin's
+  //    phone scans to create & connect this machine; flash success when done. ──
+  var _pairStarted=false, _pairCode="", _enrollDoneUntil=0;
+  function updateEnroll(s, connected, setup){
+    var ef=$("enrollfull"); if(!ef) return;
+    // undefined enrolled (older backend) → treat as enrolled so the overlay
+    // never appears on a machine that hasn't shipped this feature.
+    var enrolled = s.enrolled!==false;
+    var pst = s.pair && s.pair.status;
+
+    // success flash: keep the overlay in a dimmed "done" state for a few seconds
+    if(_enrollDoneUntil){
+      if(Date.now()<_enrollDoneUntil){
+        ef.classList.add("open","done");   // QR mờ đi báo đã kết nối (như WiFi setup: không chữ)
+        return;
+      }
+      _enrollDoneUntil=0; ef.classList.remove("open","done"); ef.dataset.code="";
+    }
+
+    var need = !enrolled && connected && !setup && !s.locked;
+    // server icon becomes tappable + pulses when the machine still needs enroll;
+    // the QR is NOT auto-shown — the user taps the icon to open the popup.
+    var ic=$("conn"); if(ic) ic.classList.toggle("needenroll", need);
+    if(need){
+      if(!_pairStarted){
+        _pairStarted=true;
+        post("/api/pair/begin").then(function(r){ if(r && r.code){ _pairCode=r.code; } });
+      }
+      if(pst==="expired"){ _pairStarted=false; _pairCode=""; ef.dataset.code=""; }  // regenerate next tick
+      if(_pairCode && ef.dataset.code!==_pairCode){
+        renderQR($("enrollCode"), "CMDPAIR:"+_pairCode); ef.dataset.code=_pairCode;
+        if(ef.classList.contains("open")) ef.dataset.code=_pairCode;  // keep open popup's QR fresh
+      }
+      // NOTE: do NOT auto-open the popup here — opened only by tapping #conn.
+    } else {
+      if(ef.classList.contains("open") && (enrolled || pst==="done")){
+        _enrollDoneUntil=Date.now()+3500;   // vừa nhận xong → QR mờ vài giây rồi đóng
+        ef.classList.add("done");
+      } else if(ef.classList.contains("open")){
+        ef.classList.remove("open"); ef.dataset.code="";
+      }
+      _pairStarted=false; _pairCode="";
+    }
+  }
   var elCount=$("count"),elTarget=$("target"),elStatus=$("statusTxt"),elDot=$("dot"),
       elBtn=$("btn"),elNote=$("note"),elConn=$("conn"),elPrn=$("prnStat"),elArd=$("ardStat"),
       elCam=$("cam"),elLive=$("live"),elLiveTxt=$("liveTxt"),elHint=$("hint");
@@ -1110,7 +1194,9 @@
     stage.dataset.state=s.state;
     elConn.className="statico"+(s.online?"":" off");
     if(elPrn) elPrn.className="statico"+(s.printer?"":" off");
-    if(elArd) elArd.className="statico"+(s.connected?"":" off");   // Arduino serial link
+    // Arduino serial link — v28.2: mờ icon cả khi CHƯA HOME (chưa chạm công tắc top =
+    // đang có vấn đề cơ khí / đang tự home) để user thấy tín hiệu máy chưa sẵn sàng.
+    if(elArd) elArd.className="statico"+((s.connected && s.homed!==false)?"":" off");
     var nt=s.target||0; if(nt!==target){target=nt;lastFrac=-1;} want=s.count||0; setCount(want); setVal();
     elTarget.textContent=s.target?s.target:"";
     // camera feed shown during warmup + recording + uploading
@@ -1136,20 +1222,37 @@
     // main button = the single valid action
     if(s.awaiting_result){elBtn.className="btn";elBtn.textContent="Processing";elBtn.disabled=true;elBtn.dataset.act="";}
     else if(s.state==="idle"||s.state==="done"){
-      var _miss=[];
-      if(!s.connected) _miss.push("Arduino");
-      if(!(s.wifi&&s.wifi.connected)) _miss.push("WiFi");
-      if(!s.online) _miss.push("Server");
-      if(!s.printer) _miss.push("Printer");   // bắt buộc có máy in mới cho START
-      // Thiếu bất kỳ tín hiệu nào (chưa set up / rớt kết nối) → START MỜ + KHÓA HẲN
-      // (disabled, không bấm được). Các icon topbar mờ đã cho biết thiếu tín hiệu nào.
-      var _blocked=_miss.length>0;
-      elBtn.className="btn"+(_blocked?" blocked":"");
-      elBtn.textContent="Start";
-      elBtn.disabled=_blocked;
-      elBtn.dataset.act=_blocked?"":"start";
-      elBtn.dataset.miss=_miss.join(", ");
-      if(_startErr && !_blocked) _startErr=null;   // reconnected → auto-close the block popup
+      // v28.3 MANUAL HOME: sau khi Stop giữa chừng / mất điện / xong mẻ -> platform ở dưới,
+      // stepper CHƯA chạm công tắc top (s.homed===false). KHÔNG tự home. Hiện nút HOME để
+      // user tự bấm (biết máy đang đưa bàn về đỉnh + phát hiện nếu stepper lỗi). Chạm công
+      // tắc top xong (homed=true) thì nút mới đổi thành START.
+      if(s.connected && s.homing){
+        // đang leo về công tắc top — chờ, không bấm được (chỉ chữ HOME, không "...")
+        elBtn.className="btn ghost"; elBtn.textContent="HOME"; elBtn.disabled=true;
+        elBtn.dataset.act=""; elBtn.dataset.miss="";
+      }
+      else if(s.connected && s.homed===false){
+        // chưa home -> nút HOME (đưa bàn về đỉnh) — điều kiện DUY NHẤT để rồi mới START được
+        elBtn.className="btn"; elBtn.textContent="HOME"; elBtn.disabled=false;
+        elBtn.dataset.act="home"; elBtn.dataset.miss="";
+        if(_startErr) _startErr=null;
+      }
+      else {
+        var _miss=[];
+        if(!s.connected) _miss.push("Arduino");
+        if(!(s.wifi&&s.wifi.connected)) _miss.push("WiFi");
+        if(!s.online) _miss.push("Server");
+        if(!s.printer) _miss.push("Printer");   // bắt buộc có máy in mới cho START
+        // Thiếu bất kỳ tín hiệu nào (chưa set up / rớt kết nối) → START MỜ + KHÓA HẲN
+        // (disabled, không bấm được). Các icon topbar mờ đã cho biết thiếu tín hiệu nào.
+        var _blocked=_miss.length>0;
+        elBtn.className="btn"+(_blocked?" blocked":"");
+        elBtn.textContent="Start";
+        elBtn.disabled=_blocked;
+        elBtn.dataset.act=_blocked?"":"start";
+        elBtn.dataset.miss=_miss.join(", ");
+        if(_startErr && !_blocked) _startErr=null;   // reconnected → auto-close the block popup
+      }
     }
     else if(s.state==="checking"||s.state==="warmup"||s.state==="recording"){elBtn.className="btn ghost";elBtn.textContent="Stop";elBtn.disabled=false;elBtn.dataset.act="cancel";}
     else if(s.state==="failed"){var act=ACT[(s.error&&s.error.action)||""];
@@ -1204,6 +1307,11 @@
         qf.classList.add("open");
       }
     } else if(qf.classList.contains("open")){ qf.classList.remove("open"); qf.dataset.ssid=""; }
+
+    // ── Server pairing: máy ĐÃ có WiFi nhưng CHƯA nhận (chưa có credentials) →
+    //    hiện QR full-screen để điện thoại Super Admin quét, tạo & kết nối máy. ──
+    updateEnroll(s, connected, setup);
+
     // topbar WiFi signal indicator real-time
     var wb=$("wifiBtn");
     if(wb){
@@ -1266,6 +1374,7 @@
       if(elBtn.dataset.miss){ _startErr=elBtn.dataset.miss; showBlockErr(); return; }  // chặn khi thiếu kết nối
       post("/api/start").finally(pollNow);
     }
+    else if(a==="home")post("/api/home").finally(pollNow);         // v28.3: đưa bàn về đỉnh (chạm công tắc top)
     else if(a==="dismiss")post("/api/dismiss").finally(pollNow);   // lỗi -> về Ready (sắp bài rồi mới START)
     else if(a==="cancel")post("/api/cancel").finally(pollNow);     // cancel
     else if(a==="resend")post("/api/retry").finally(pollNow);      // resend
@@ -1287,6 +1396,15 @@
   function openS(o){sheet.classList.toggle("open",o);scrim.classList.toggle("open",o);
     if(o){loadHistory();loadDevice();}}
   $("gear").addEventListener("click",function(){openS(true);});
+  // Server icon: while un-connected it pulses (.needenroll) — tap it to OPEN the
+  // enroll QR popup; tap the dark area outside the QR to close it.
+  var _cbtn=$("conn"); if(_cbtn) _cbtn.addEventListener("click",function(){
+    if(!_cbtn.classList.contains("needenroll")) return;
+    var ef=$("enrollfull");
+    if(_pairCode && ef.dataset.code!==_pairCode){ renderQR($("enrollCode"),"CMDPAIR:"+_pairCode); ef.dataset.code=_pairCode; }
+    ef.classList.add("open");
+  });
+  var _ef=$("enrollfull"); if(_ef) _ef.addEventListener("click",function(e){ if(e.target===_ef) _ef.classList.remove("open"); });
   // WiFi icon — tap to open settings where WiFi status + setup live (like the printer icon)
   var _wbtn=$("wifiBtn"); if(_wbtn) _wbtn.addEventListener("click",function(){openS(true);});
   $("close").addEventListener("click",function(){openS(false);});
@@ -1299,6 +1417,46 @@
       fetch("/api/quit",{method:"POST"}).catch(function(){});
     }
   });
+
+  // ── KÉO-ĐỂ-CUỘN (grab & drag) mọi hướng X/Y/xéo ─────────────────────────────
+  // Panel cảm ứng ADS7846 (điện trở) bị X11 gắn làm SLAVE POINTER = Chromium coi
+  // như CHUỘT. Chuột kéo-thả KHÔNG cuộn overflow (chỉ bánh xe mới cuộn) -> user
+  // vuốt dọc không được. Fix: tự cuộn container theo quãng kéo của con trỏ (dùng
+  // Pointer Events -> chạy cho cả chuột lẫn touch). Vuốt hướng nào cũng cuộn được;
+  // chạm-không-kéo vẫn click bình thường (ngưỡng 6px phân biệt tap vs drag).
+  (function(){
+    function scrollable(el){
+      for(; el && el!==document.body && el!==document.documentElement; el=el.parentElement){
+        var cs=getComputedStyle(el), oy=cs.overflowY, ox=cs.overflowX;
+        if(((oy==="auto"||oy==="scroll") && el.scrollHeight>el.clientHeight+1) ||
+           ((ox==="auto"||ox==="scroll") && el.scrollWidth >el.clientWidth +1)) return el;
+      }
+      return null;
+    }
+    var tgt=null, pid=null, lx=0, ly=0, dx0=0, dy0=0, moved=false;
+    var TH=6;   // px: kéo quá ngưỡng này mới coi là "cuộn", dưới ngưỡng = tap/click
+    document.addEventListener("pointerdown",function(e){
+      if(e.button && e.button!==0) return;        // chỉ nút trái / ngón chạm
+      var t=scrollable(e.target); if(!t) return;  // vùng không cuộn được -> kệ, để click
+      tgt=t; pid=e.pointerId; lx=dx0=e.clientX; ly=dy0=e.clientY; moved=false;
+    },true);
+    document.addEventListener("pointermove",function(e){
+      if(tgt===null||e.pointerId!==pid) return;
+      if(!moved && (Math.abs(e.clientX-dx0)+Math.abs(e.clientY-dy0))<TH) return;
+      moved=true;
+      tgt.scrollTop  -= (e.clientY-ly);           // kéo xuống -> nội dung theo tay (Y)
+      tgt.scrollLeft -= (e.clientX-lx);           // kéo ngang (X) — xéo = cả 2 cùng lúc
+      lx=e.clientX; ly=e.clientY;
+      e.preventDefault();                         // chặn bôi đen / kéo ảnh khi đang cuộn
+    },{capture:true,passive:false});
+    function end(){ tgt=null; pid=null; }
+    document.addEventListener("pointerup",end,true);
+    document.addEventListener("pointercancel",end,true);
+    // Sau khi KÉO thì nuốt cú click kèm theo (đừng vô tình bấm nút mình vừa lướt qua).
+    document.addEventListener("click",function(e){
+      if(moved){ e.preventDefault(); e.stopPropagation(); moved=false; }
+    },true);
+  })();
 
   // ── Nút "Tắt app" trong Settings: bấm 1 lần xác nhận, bấm 2 trong 3s → quit ──
   (function(){
@@ -1539,6 +1697,20 @@
       }).catch(function(){btn.disabled=false;btn.textContent="Scan network";msg("Scan failed","err");});
     });
 
+    // Add by IP tay: máy in mạng KHÔNG auto-discover -> BE dò cổng (9100/631/515) + phân loại backend.
+    var _mAdd=$("prnManualAdd");
+    if(_mAdd) _mAdd.addEventListener("click",function(){
+      var ip=($("prnManualIp").value||"").trim();
+      if(!ip){msg("Enter printer IP","err");return;}
+      var btn=this; btn.disabled=true; var _o=btn.textContent; btn.textContent="…";
+      fetch("/api/printer/manual",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({address:ip})})
+        .then(function(r){return r.json();}).then(function(d){
+          btn.disabled=false; btn.textContent=_o;
+          if(!d.ok){msg(d.error||"Not reachable","err");return;}
+          confirmChangePrinter(d.name,function(){ $("prnManualIp").value=""; addByUri(d); });
+        }).catch(function(){btn.disabled=false;btn.textContent=_o;msg("Error","err");});
+    });
+
     // Scan Bluetooth — UI sạch như tab WiFi, phản hồi qua prnMsg.
     // (Lọc rác chỉ-hiện-máy-in làm HOÀN TOÀN ở server trong scan_bt — UI y như cũ.)
     $("prnScanBt").addEventListener("click",function(){
@@ -1593,10 +1765,15 @@
 
     function addByUri(p){
       var uri=p.uri||"", cfg={name:p.name};
-      if(uri.indexOf("socket://")===0){
-        var m=uri.match(/socket:\/\/([^:]+):?(\d*)/);
-        if(m){cfg.backend="escpos_net";cfg.address=m[1];cfg.port=parseInt(m[2])||9100;}
-      } else { cfg.backend="cups"; cfg.cups_uri=uri; }
+      // v28.3: DÙNG backend BE khuyến nghị (classify theo tên+IPP) thay vì đoán mù theo scheme.
+      //   Zebra->zpl_net, thermal->escpos_net, laser/inkjet(IPP/LPD)->cups. Cũ: socket=ESC/POS mù.
+      var be=p.backend;
+      var m=uri.match(/(?:socket|tcp):\/\/([^:\/]+):?(\d*)/);
+      if(be==="zpl_net" && m){ cfg.backend="zpl_net"; cfg.address=m[1]; cfg.port=parseInt(m[2])||9100; }
+      else if(be==="escpos_net" && m){ cfg.backend="escpos_net"; cfg.address=m[1]; cfg.port=parseInt(m[2])||9100; }
+      else if(be==="cups"){ cfg.backend="cups"; cfg.cups_uri=uri; }
+      else if(uri.indexOf("socket://")===0 && m){ cfg.backend="escpos_net"; cfg.address=m[1]; cfg.port=parseInt(m[2])||9100; }  // fallback cũ
+      else { cfg.backend="cups"; cfg.cups_uri=uri; }
       addCfg(cfg);
     }
 

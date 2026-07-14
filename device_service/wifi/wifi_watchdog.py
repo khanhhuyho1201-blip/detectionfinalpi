@@ -23,6 +23,11 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("wifi_watchdog")
 
+# [gom folder 2026-07] file ở device_service/wifi/ — thêm thư mục cha device_service/
+#   vào sys.path để 'from settings import settings' chạy khi systemd gọi trực tiếp
+#   .../wifi/wifi_watchdog.py (lúc đó sys.path[0] = wifi/, không có settings.py).
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from settings import settings
 
 HERE = os.path.dirname(os.path.abspath(__file__))

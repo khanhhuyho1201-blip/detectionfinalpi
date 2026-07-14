@@ -2,6 +2,39 @@
 
 Toàn bộ cấu hình màn hình + cảm ứng + kiosk cho Card Feeder.
 Folder này là kết quả của quá trình chẩn đoán/fix đầy đủ trên máy `bbswcmd`.
+**Đây là 1 folder DUY NHẤT để setup phần màn hình/cảm ứng cho mọi máy sau.**
+
+## Cấu trúc folder (gom 2026-07-14)
+
+```
+screen_setup/
+├─ SETUP_GUIDE.md                 ← FILE NÀY (thứ tự setup máy mới)
+├─ display/
+│   └─ config.txt.waveshare35c    ← các dòng cần thêm vào /boot/firmware/config.txt
+├─ (driver cảm ứng — ở gốc folder)
+│   install-ads7846-touch.sh  ads7846_touch.py  prepare-spidev.sh  run-touch.sh
+│   touch.env  ads7846-touch.service  recalibrate.sh  affine_calib.py
+│   fit_models.py  drawpad.py  touchtest_gui.py  README.md
+└─ kiosk/                         ← launcher + autostart + cursor + calib (bản LIVE đã chép)
+    card-feeder-launch.sh         ← LAUNCHER THẬT (X11) — cài vào ~/.local/bin/
+    cardfeeder.desktop            ← autostart mở app khi boot -> ~/.config/autostart/
+    unclutter.desktop             ← ẩn con trỏ (autostart) -> ~/.config/autostart/
+    app-cardfeeder@autostart.service  ← unit systemd --user (tham khảo)
+    99-calibration.conf           ← X11 calib (chỉ hợp driver kernel; userspace bỏ qua)
+    kiosk-wayland.sh              ← launcher Wayland/labwc CŨ (KHÔNG dùng trên máy X11)
+    open_kiosk.sh / stop_kiosk.sh ← helper mở/dừng kiosk (model card-device.service cũ)
+```
+
+## Thứ tự setup 1 máy MỚI (tóm tắt)
+
+1. **Màn hình**: chép `display/config.txt.waveshare35c` vào `/boot/firmware/config.txt` → reboot.
+2. **Cảm ứng**: `sudo bash install-ads7846-touch.sh` → reboot → `sudo fix-touch` (hiệu chỉnh 9 điểm).
+3. **Kiosk app**: chép `kiosk/card-feeder-launch.sh` → `~/.local/bin/` (chmod +x);
+   `kiosk/cardfeeder.desktop` + `kiosk/unclutter.desktop` → `~/.config/autostart/`.
+4. Reboot → app tự mở toàn màn hình, cảm ứng + ẩn con trỏ hoạt động.
+
+*(Cuộn cảm ứng "kéo-để-cuộn" và ẩn con trỏ ở tầng trang nằm trong app UI
+`device_service/web/index.html`, KHÔNG phải ở folder này — đi theo repo sẵn.)*
 
 ## Vấn đề phần cứng của màn hình này
 
@@ -55,6 +88,9 @@ dtoverlay=waveshare35c,speed=20000000,fps=20
   lxpolkit, polkit-mate-authentication-agent-1, pwrkey.
 
 ### 5. WiFi setup flow (QR + captive portal)
+- **TẤT CẢ file WiFi ở `device_service/wifi/`** (gom 1 chỗ 2026-07 — xem
+  `device_service/wifi/WIFI_SETUP_README.md` để debug). Service trỏ
+  `.../device_service/wifi/wifi_portal.py` và `.../wifi/wifi_watchdog.py`.
 - 2 service PHẢI cài (repo có sẵn file nhưng chú ý **đường dẫn đúng**):
   - `card-wifi-portal.service` → chạy `wifi_portal.py` bằng **venv** (cần flask),
     cổng 80, root.
@@ -65,11 +101,15 @@ dtoverlay=waveshare35c,speed=20000000,fps=20
 - Nhiều điện thoại cùng vào được; **ai bấm Connect trước thắng** (máy sau nhận
   "Another phone is configuring").
 
-### 6. App tự mở khi boot
-- `~/.config/autostart/cardfeeder.desktop` → `card-feeder-launch.sh`
-  (Flask :8800 + Chromium kiosk).
+### 6. App tự mở khi boot  (bản gốc các file: `kiosk/`)
+- Chép `kiosk/card-feeder-launch.sh` → `~/.local/bin/` (`chmod +x`). Đây là launcher
+  THẬT trên máy X11: Flask :8800 + Chromium `--kiosk --ozone-platform=x11`, tự dò
+  cổng serial Arduino (`ttyUSB0`>`ttyACM0`>`sim`), relaunch nếu server chết.
+- Chép `kiosk/cardfeeder.desktop` → `~/.config/autostart/` (autostart mở app khi boot).
+- Chép `kiosk/unclutter.desktop` → `~/.config/autostart/` (ẩn con trỏ chuột).
 - Mở từ máy khác: `http://<IP-của-Pi>:8800/` (cần `CARD_WEB_HOST=0.0.0.0`
   trong `/home/bbsw/workspace/.env`).
+- Wayland/labwc cũ: `kiosk/kiosk-wayland.sh` (không dùng trên máy X11 này — giữ tham khảo).
 
 ## File trong folder này
 
@@ -86,3 +126,10 @@ dtoverlay=waveshare35c,speed=20000000,fps=20
 | `fit_models.py` | Fit affine/bilinear/biquadratic, chọn tốt nhất |
 | `drawpad.py`, `touchtest_gui.py` | Công cụ test hướng/độ chính xác |
 | `README.md` | Chi tiết driver cảm ứng |
+| `display/config.txt.waveshare35c` | Dòng cần thêm vào `/boot/firmware/config.txt` |
+| `kiosk/card-feeder-launch.sh` | **Launcher THẬT** (X11) → `~/.local/bin/` |
+| `kiosk/cardfeeder.desktop` | Autostart app → `~/.config/autostart/` |
+| `kiosk/unclutter.desktop` | Autostart ẩn con trỏ → `~/.config/autostart/` |
+| `kiosk/kiosk-wayland.sh` | Launcher Wayland/labwc cũ (tham khảo) |
+| `kiosk/open_kiosk.sh`, `kiosk/stop_kiosk.sh` | Helper mở/dừng kiosk (model cũ) |
+| `kiosk/99-calibration.conf` | X11 calib (driver kernel; userspace bỏ qua) |

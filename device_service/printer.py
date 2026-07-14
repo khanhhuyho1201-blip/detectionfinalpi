@@ -16,8 +16,10 @@ Backends:
   escpos_file — ESC/POS over /dev/usb/lp* or /dev/rfcomm0 (USB / BT)
 """
 
+import glob
 import logging
 import os
+import re
 import socket
 import subprocess
 import tempfile
@@ -90,6 +92,64 @@ def _qr_image(text: str, box_size: int = 10):
     return qr.make_image(fill_color="black", back_color="white").convert("RGB")
 
 
+def _qr_fill(text: str, target_dots: int, border: int = 4, min_module_dots: int = 3):
+    """RESPONSIVE QR: build a QR sized to FILL `target_dots` wide (paper width in dots).
+    Integer dots/module -> crisp module edges (no interpolation blur). Returns
+    (image, module_dots). module_dots < min_module_dots => paper too narrow to print a
+    reliably-scannable QR at this width (caller should warn).
+    Payload is a short UUID (~29 modules + quiet zone ~37), so even a 40mm/320-dot roll
+    still yields ~7 dots/module — scannable. That's why fill-to-width is safe on tiny paper."""
+    import qrcode
+    probe = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=border)
+    probe.add_data(text)
+    probe.make(fit=True)
+    total = probe.modules_count + 2 * border          # modules incl. quiet zone
+    box = max(min_module_dots, int(target_dots) // total)   # integer dots/module -> fill width
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,
+                       box_size=box, border=border)
+    qr.add_data(text)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+    return img, box
+
+
+# ── responsive media size for CUPS: honour the printer's REAL paper, not hardcoded A4 ──
+_PAGESIZE_PTS = {"A4": (595, 842), "Letter": (612, 792), "A5": (420, 595),
+                 "A6": (298, 420), "Legal": (612, 1008), "A3": (842, 1191)}
+
+
+def _pagesize_pts(name: str | None):
+    """Map a CUPS PageSize name to (w_pt, h_pt). Handles Custom.WxH in pt or mm."""
+    if not name:
+        return None
+    if name in _PAGESIZE_PTS:
+        return _PAGESIZE_PTS[name]
+    m = re.match(r"(?:Custom\.)?(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)(mm)?$", name)
+    if m:
+        w, h = float(m.group(1)), float(m.group(2))
+        if m.group(3) == "mm":
+            w, h = w * 72.0 / 25.4, h * 72.0 / 25.4
+        return (round(w), round(h))
+    return None
+
+
+def _media_points(printer_name: str):
+    """(w_pt, h_pt) of the printer's DEFAULT media from its PPD, or None (raw queue/unknown).
+    Lets the QR fill whatever paper the queue is set to (A4, label roll, 4x6…) instead of
+    always A4. Raw queues (no PPD) return None -> caller falls back to A4 (sane for PS lasers)."""
+    try:
+        out = subprocess.run(["lpoptions", "-p", printer_name, "-l"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return None
+    for line in out.splitlines():
+        if line.startswith("PageSize") and ":" in line:
+            opts = line.split(":", 1)[1].split()
+            default = next((t[1:] for t in opts if t.startswith("*")), None)
+            return _pagesize_pts(default)
+    return None
+
+
 def _compose_page(run_id: str):
     """QR only — no title, no id text, no hint.
 
@@ -98,6 +158,58 @@ def _compose_page(run_id: str):
     zone; CUPS `fit-to-page` then scales this square up to fill the paper.
     """
     return _qr_image(run_id, box_size=10)
+
+
+def _parse_job_id(lp_stdout: str):
+    """'request id is Brother-123 (1 file(s))' -> 'Brother-123'."""
+    m = re.search(r"request id is (\S+)", lp_stdout or "")
+    return m.group(1) if m else None
+
+
+_JOB_FAIL_MSGS = ("unavailable", "may not exist", "unable to", "offline", "check the",
+                  "turned off", "cannot", "no such", "connection refused", "timed out")
+
+
+def _wait_job(printer_name: str, job_id: str, timeout: int = 18) -> bool:
+    """[review v28.3] lp-BÁO-THẬT: True nếu job IN XONG; False nếu máy in lỗi (mất kết nối / hết
+    giấy / offline). Bắt qua: queue disabled + STATUS chi tiết của job (CUPS ghi 'printer may not
+    exist or is unavailable...' khi backend không nối được — queue KHÔNG tự disable). Chậm-mà-ổn
+    (job xếp hàng, không lỗi) -> timeout trả True (đừng báo oan máy in chậm)."""
+    deadline = time.monotonic() + timeout
+    bad = 0
+    while time.monotonic() < deadline:
+        try:
+            ps = subprocess.run(["lpstat", "-p", printer_name],
+                                capture_output=True, text=True, timeout=5).stdout.lower()
+            if "disabled" in ps or "not accepting" in ps:
+                logger.warning("print FAILED: queue %s disabled/rejecting (job %s)", printer_name, job_id)
+                return False
+        except Exception:
+            pass
+        try:
+            comp = subprocess.run(["lpstat", "-W", "completed", "-o", printer_name],
+                                  capture_output=True, text=True, timeout=5).stdout
+            if job_id in comp:
+                return True
+            notc = subprocess.run(["lpstat", "-W", "not-completed", "-o", printer_name],
+                                  capture_output=True, text=True, timeout=5).stdout
+            if job_id not in notc:      # hết pending + không thấy completed -> in xong đã purge -> OK
+                return True
+            # job VẪN pending: đọc STATUS chi tiết -> có thông điệp lỗi kết nối/máy in?
+            detail = subprocess.run(["lpstat", "-l", "-o", printer_name],
+                                    capture_output=True, text=True, timeout=5).stdout.lower()
+            if any(k in detail for k in _JOB_FAIL_MSGS):
+                bad += 1
+                if bad >= 3:            # lỗi ổn định ~2s -> máy in KHÔNG in được thật
+                    logger.warning("print FAILED: máy in lỗi/không tới (job %s): %s",
+                                   job_id, next((k for k in _JOB_FAIL_MSGS if k in detail), "?"))
+                    return False
+            else:
+                bad = 0
+        except Exception:
+            pass
+        time.sleep(0.6)
+    return True   # timeout: job chậm-mà-không-lỗi (xếp hàng) -> chấp nhận, đừng báo oan
 
 
 class CupsPrinter(Printer):
@@ -227,11 +339,14 @@ class CupsPrinter(Printer):
             ps_path = ps_tmp.name
             ps_tmp.close()
 
-            # PDF → A4 PostScript (Brother printers speak PS natively)
+            # PDF → PostScript, FitPage fills the sheet. RESPONSIVE: use the printer's REAL
+            # media size (from its PPD) so the QR fills A4 / label roll / 4x6 / whatever the
+            # queue is set to — not always A4. Raw queue (no PPD) -> A4 (sane for PS lasers).
+            w_pt, h_pt = _media_points(printer_name) or (595, 842)
             gs = subprocess.run(
                 ["gs", "-dNOPAUSE", "-dBATCH", "-dSAFER",
                  "-sDEVICE=ps2write", "-dFIXEDMEDIA",
-                 "-dDEVICEWIDTHPOINTS=595", "-dDEVICEHEIGHTPOINTS=842",
+                 f"-dDEVICEWIDTHPOINTS={w_pt}", f"-dDEVICEHEIGHTPOINTS={h_pt}",
                  "-dFitPage", f"-sOutputFile={ps_path}", pdf_path],
                 capture_output=True, text=True, timeout=20
             )
@@ -243,10 +358,15 @@ class CupsPrinter(Printer):
                 ["lp", "-d", printer_name, ps_path],
                 capture_output=True, text=True, timeout=30
             )
-            ok = res.returncode == 0
-            if not ok:
+            if res.returncode != 0:
                 logger.warning("lp failed: %s", res.stderr.strip())
-            return ok
+                return False
+            # lp chỉ XẾP HÀNG -> trả về ngay dù máy in chưa in / lỗi. Poll trạng thái JOB thật:
+            #   queue bị dừng/không nhận (hết giấy, lỗi) hoặc job bị huỷ -> báo THẤT BẠI (không "im lặng OK").
+            job = _parse_job_id(res.stdout)
+            if job:
+                return _wait_job(printer_name, job, timeout=20)
+            return True   # không đọc được job id -> giữ hành vi cũ, đừng báo lỗi oan
         except Exception as e:
             logger.exception("_lp_image failed: %s", e)
             return False
@@ -285,9 +405,10 @@ class CupsPrinter(Printer):
 class EscposNetPrinter(Printer):
     """ESC/POS over TCP socket — WiFi thermal printers (port 9100)."""
 
-    def __init__(self, host: str, port: int = 9100):
+    def __init__(self, host: str, port: int = 9100, width_dots: int = 384):
         self._host = host
         self._port = port
+        self._width = int(width_dots)   # bề rộng in (dot): 58mm=384, 80mm=576 — QR fill trọn
 
     def is_available(self) -> bool:
         try:
@@ -304,10 +425,15 @@ class EscposNetPrinter(Printer):
         try:
             from escpos.printer import Network
             p = Network(self._host, self._port, timeout=15)
-            p.image(_compose_page(run_id), center=True)
+            img, box = _qr_fill(run_id, self._width)     # RESPONSIVE: fill paper width
+            if box < 3:
+                logger.warning("EscposNet: giấy %ddot quá hẹp cho QR quét được (%d dot/module)",
+                               self._width, box)
+            p.image(img, center=True)
             p.cut()
             p.close()
-            logger.info("EscposNet printed QR for %s → %s:%s", run_id, self._host, self._port)
+            logger.info("EscposNet printed QR for %s → %s:%s (%ddot, box=%d)",
+                        run_id, self._host, self._port, self._width, box)
             return True
         except Exception as e:
             logger.exception("EscposNet print_qr failed: %s", e)
@@ -331,26 +457,116 @@ class EscposNetPrinter(Printer):
             return False
 
 
+class ZplNetPrinter(Printer):
+    """ZPL over TCP :9100 — Zebra label printers (ZD410/ZD420/GK420/ZDesigner…).
+    Zebra KHÔNG hiểu ESC/POS raster (in ra rác) — ZPL là ngôn ngữ gốc của nó. Dùng lệnh QR
+    gốc ^BQ ở magnification tối đa (10) -> QR to nhất ZPL cho phép (lấp nhãn nhỏ/vừa)."""
+
+    def __init__(self, host: str, port: int = 9100, mag: int = 10):
+        self._host = host
+        self._port = port
+        self._mag = max(1, min(10, int(mag)))   # ZPL QR magnification 1..10 (10 = lớn nhất)
+
+    def is_available(self) -> bool:
+        try:
+            socket.create_connection((self._host, self._port), timeout=3).close()
+            return True
+        except Exception:
+            return False
+
+    def _zpl_qr(self, run_id: str) -> bytes:
+        # ^BQN,2,<mag> = QR model 2 + magnification; ^FDMA,<data> = error-correction M + auto mode.
+        # (đã verify render QR thật qua Labelary — trình render ZPL chuẩn.)
+        return ("^XA\n^CI28\n^FO20,20\n^BQN,2,%d\n^FDMA,%s^FS\n^XZ\n"
+                % (self._mag, run_id)).encode("ascii", "ignore")
+
+    def print_qr(self, run_id: str) -> bool:
+        if FAKE_PRINTER:
+            logger.info("FAKE_PRINTER: simulated zpl_net print for %s", run_id)
+            return True
+        try:
+            with socket.create_connection((self._host, self._port), timeout=15) as s:
+                s.sendall(self._zpl_qr(run_id))
+            logger.info("ZplNet printed QR for %s → %s:%s", run_id, self._host, self._port)
+            return True
+        except Exception as e:
+            logger.exception("ZplNet print_qr failed: %s", e)
+            return False
+
+    def print_text(self, text: str) -> bool:
+        if FAKE_PRINTER:
+            return True
+        try:
+            zpl = ("^XA\n^CI28\n^FO20,20^A0N,40,40^FD%s^FS\n^XZ\n" % text).encode("ascii", "ignore")
+            with socket.create_connection((self._host, self._port), timeout=15) as s:
+                s.sendall(zpl)
+            return True
+        except Exception as e:
+            logger.exception("ZplNet print_text failed: %s", e)
+            return False
+
+
+def _ensure_rfcomm(device: str, mac: str) -> bool:
+    """BT BỀN QUA REBOOT: rfcomm bind chỉ làm lúc pair -> sau reboot /dev/rfcomm0 MẤT. Ở đây tự
+    bind LẠI từ MAC đã pair khi node thiếu (self-heal, khỏi cần systemd riêng). Thiết bị trusted
+    -> connect + bind là node hiện lại, mở là in được. (rfcomm/bluetoothctl cần quyền — user ở
+    group bluetooth/dialout trên Pi.)"""
+    if not device.startswith("/dev/rfcomm"):
+        return os.path.exists(device)
+    if os.path.exists(device):
+        return True
+    if not mac:
+        return False
+    try:
+        subprocess.run(["bluetoothctl", "connect", mac], capture_output=True, timeout=8)
+    except Exception:
+        pass
+    try:
+        subprocess.run(["rfcomm", "bind", device, mac, "1"], capture_output=True, timeout=8)
+    except Exception:
+        return False
+    for _ in range(10):
+        if os.path.exists(device):
+            logger.info("RFCOMM re-bound %s -> %s (BT self-heal sau reboot)", device, mac)
+            return True
+        time.sleep(0.3)
+    return os.path.exists(device)
+
+
 class EscposFilePrinter(Printer):
     """ESC/POS over a device file — USB (/dev/usb/lp*) or BT RFCOMM (/dev/rfcomm0)."""
 
-    def __init__(self, device: str):
+    def __init__(self, device: str, width_dots: int = 384, bt_mac: str = ""):
         self._device = device
+        self._width = int(width_dots)   # bề rộng in (dot): 58mm=384, 80mm=576 — QR fill trọn
+        self._mac = bt_mac or ""        # MAC BT (để tự bind lại RFCOMM sau reboot)
 
     def is_available(self) -> bool:
+        if self._mac and self._device.startswith("/dev/rfcomm"):
+            return _ensure_rfcomm(self._device, self._mac)
         return os.path.exists(self._device)
+
+    def _heal(self):
+        if self._mac and self._device.startswith("/dev/rfcomm"):
+            _ensure_rfcomm(self._device, self._mac)
 
     def print_qr(self, run_id: str) -> bool:
         if FAKE_PRINTER:
             logger.info("FAKE_PRINTER: simulated escpos_file print for %s", run_id)
             return True
+        self._heal()                                     # BT: bind lại RFCOMM nếu mất (sau reboot)
         try:
             from escpos.printer import File
             p = File(self._device, auto_cut=True)
-            p.image(_compose_page(run_id), center=True)
+            img, box = _qr_fill(run_id, self._width)     # RESPONSIVE: fill paper width
+            if box < 3:
+                logger.warning("EscposFile: giấy %ddot quá hẹp cho QR quét được (%d dot/module)",
+                               self._width, box)
+            p.image(img, center=True)
             p.cut()
             p.close()
-            logger.info("EscposFile printed QR for %s → %s", run_id, self._device)
+            logger.info("EscposFile printed QR for %s → %s (%ddot, box=%d)",
+                        run_id, self._device, self._width, box)
             return True
         except Exception as e:
             logger.exception("EscposFile print_qr failed: %s", e)
@@ -360,6 +576,7 @@ class EscposFilePrinter(Printer):
         if FAKE_PRINTER:
             logger.info("FAKE_PRINTER: simulated escpos_file text: %s", text)
             return True
+        self._heal()                                     # BT: bind lại RFCOMM nếu mất (sau reboot)
         try:
             from escpos.printer import File
             p = File(self._device, auto_cut=True)
@@ -374,7 +591,8 @@ class EscposFilePrinter(Printer):
             return False
 
 
-_BACKENDS = {"cups": CupsPrinter, "escpos_net": EscposNetPrinter, "escpos_file": EscposFilePrinter}
+_BACKENDS = {"cups": CupsPrinter, "escpos_net": EscposNetPrinter,
+             "escpos_file": EscposFilePrinter, "zpl_net": ZplNetPrinter}
 
 
 def get_printer() -> Printer:
@@ -387,17 +605,32 @@ def get_printer() -> Printer:
         cfg = load_cfg()
         if cfg:
             backend = cfg.get("backend", "cups")
+            w = int(cfg.get("width_dots", 384))          # bề rộng thermal: 58mm=384 mặc định
+            if backend == "zpl_net":
+                return ZplNetPrinter(cfg["address"], int(cfg.get("port", 9100)), int(cfg.get("mag", 10)))
             if backend == "escpos_net":
-                return EscposNetPrinter(cfg["address"], int(cfg.get("port", 9100)))
+                return EscposNetPrinter(cfg["address"], int(cfg.get("port", 9100)), w)
             if backend in ("escpos_file", "escpos_bt"):
-                return EscposFilePrinter(cfg.get("device", "/dev/usb/lp0"))
+                return EscposFilePrinter(cfg.get("device", "/dev/usb/lp0"), w, cfg.get("bt_mac", ""))
             if backend == "cups":
                 return CupsPrinter(cups_name=cfg.get("cups_name"),
                                    cups_uri=cfg.get("cups_uri"))
     except Exception as e:
         logger.debug("printer cfg load: %s", e)
 
-    # 2. Legacy env var (settings.printer.backend)
+    # 2. USB AUTO-DETECT (backend-only, KHÔNG hiển thị trên UI — theo yêu cầu anh):
+    #    máy in USB thô cắm vào + CHƯA cấu hình gì + không có queue CUPS -> tự dùng ESC/POS file.
+    #    CHỈ /dev/usb/lp* (usblp = máy in thật). TUYỆT ĐỐI KHÔNG đụng /dev/ttyUSB* (đó là Arduino
+    #    card feeder!) — quét nhầm là hỏng máy. -> đường Arduino an toàn tuyệt đối.
+    try:
+        usb = sorted(glob.glob("/dev/usb/lp*"))
+        if usb and CupsPrinter()._printer_name() is None:
+            logger.info("USB printer auto-detected (no config, no CUPS queue) -> %s", usb[0])
+            return EscposFilePrinter(usb[0])
+    except Exception as e:
+        logger.debug("usb auto-detect: %s", e)
+
+    # 3. Legacy env var (settings.printer.backend)
     name = settings.printer.backend.lower()
     return _BACKENDS.get(name, CupsPrinter)()
 

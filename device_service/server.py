@@ -85,6 +85,12 @@ def start():
     return jsonify({"ok": ctrl.start()})
 
 
+@app.route("/api/home", methods=["POST"])
+def api_home():
+    # v28.3: user bấm nút HOME/RESET -> stepper leo về chạm công tắc top (thủ công, không tự động)
+    return jsonify({"ok": ctrl.home()})
+
+
 @app.route("/api/reset", methods=["POST"])
 def api_reset():
     return jsonify({"ok": ctrl.reset()})
@@ -147,6 +153,14 @@ def printer_scan_network():
     return jsonify({"printers": printer_setup.scan_network()})
 
 
+@app.route("/api/printer/manual", methods=["POST"])
+def printer_manual():
+    # NHẬP IP TAY: gõ IP/host máy in mạng không auto-discover -> dò cổng + phân loại backend
+    import printer_setup
+    d = request.get_json(force=True, silent=True) or {}
+    return jsonify(printer_setup.manual_entry(d.get("address", "")))
+
+
 @app.route("/api/printer/scan/bt", methods=["POST"])
 def printer_scan_bt():
     import printer_setup
@@ -201,7 +215,7 @@ def wifi_setup():
     import subprocess
     import threading
     here = os.path.dirname(os.path.abspath(__file__))
-    ap = os.path.join(here, "wifi_ap.sh")
+    ap = os.path.join(here, "wifi", "wifi_ap.sh")  # [gom folder 2026-07] wifi_ap.sh chuyển vào device_service/wifi/
 
     # HIỆN QR NGAY (lạc quan) — khỏi chờ _refresh_wifi phát hiện AP (mỗi 5s, còn bị
     # probe máy in đẩy trễ). AP lên nền song song; user vừa cầm điện thoại là AP đã sẵn.
@@ -250,6 +264,18 @@ def enroll():
     return jsonify(ctrl.enroll(d.get("server_url", "").strip(),
                                d.get("device_id", "").strip(),
                                d.get("setup_token", "").strip()))
+
+
+@app.route("/api/pair/begin", methods=["POST"])
+def pair_begin():
+    """UI calls this on an un-enrolled device (WiFi up, no credentials) to get a
+    pairing code to show as a QR. Idempotent; a no-op if already enrolled."""
+    return jsonify(ctrl.begin_pairing())
+
+
+@app.route("/api/pair/status")
+def pair_status():
+    return jsonify(ctrl.pairing_status())
 
 
 @app.route("/preview_test.mjpeg")

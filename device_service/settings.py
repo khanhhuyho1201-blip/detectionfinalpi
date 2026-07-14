@@ -261,9 +261,14 @@ class Wifi:
             iface=_str("CARD_WIFI_IFACE", "wlan0"),
             ap_con="CardFeederAP",
             ap_ssid=_str("CARD_AP_SSID", ""),
-            portal_port=_int("CARD_PORTAL_PORT", 80),
+            # [FIX MED 2026-07] GHIM cổng 80: captive-portal probe của MỌI OS luôn nhắm
+            #   cổng 80, và nft DNAT trong wifi_ap.sh cũng hardcode :80. Cho đổi port =
+            #   footgun (đổi -> probe DNAT về :80 không ai listen -> portal chết mọi OS).
+            portal_port=80,
             manual_lock=_str("CARD_WIFI_MANUAL_LOCK", "/run/card_wifi_manual.lock"),
-            check_every=_float("CARD_WIFI_CHECK", 0.2),
+            # [FIX MED 2026-07] 0.2 -> 2.0: giá trị test bỏ quên. 0.2s => watchdog spawn
+            #   ~10 tiến trình nmcli/giây suốt 24/7 -> fork churn + nóng máy Pi vô ích.
+            check_every=_float("CARD_WIFI_CHECK", 2.0),
             grace=_float("CARD_WIFI_GRACE", 0.2),
             ap_timeout=_float("CARD_AP_TIMEOUT", 0.0),
             boot_wait_saved=_float("CARD_WIFI_BOOTWAIT_SAVED", 8.0),
@@ -307,6 +312,10 @@ class Enroll:
     test_device_id: str
     test_setup_token: str
     heartbeat_interval: float  # giây giữa 2 lần ping server
+    # Server the device announces its pairing code to and polls for credentials
+    # during QR-scan enroll (a super-admin's phone claims the code). Must be a
+    # host the device can reach from the field — the public cloudflared tunnel.
+    pair_server_url: str
 
     @classmethod
     def load(cls) -> "Enroll":
@@ -316,6 +325,7 @@ class Enroll:
             test_device_id=_str("CARD_TEST_DEVICE_ID", ""),
             test_setup_token=_str("CARD_TEST_SETUP_TOKEN", ""),
             heartbeat_interval=_float("CARD_HEARTBEAT_INTERVAL", 30.0),
+            pair_server_url=_str("CARD_PAIR_SERVER_URL", "https://cmdtest.berp.vn"),
         )
 
 

@@ -63,9 +63,12 @@ def remove_cfg() -> None:
 # ── USB discovery ─────────────────────────────────────────────────────────────
 
 def scan_usb() -> list[dict]:
-    """Return list of USB printer devices found on this machine."""
+    """Return list of USB printer devices found on this machine.
+    CHỈ /dev/usb/lp* (usblp = máy in thật). BỎ /dev/ttyUSB* — đó là con Arduino card feeder
+    (FTDI), quét/chọn nhầm nó làm 'máy in' sẽ HỎNG đường điều khiển motor. Máy in USB serial-
+    only (hiếm) không hỗ trợ ở đây để bảo vệ tuyệt đối kết nối Arduino."""
     results = []
-    for dev in sorted(glob.glob("/dev/usb/lp*") + glob.glob("/dev/ttyUSB*")):
+    for dev in sorted(glob.glob("/dev/usb/lp*")):
         info = {"device": dev, "name": os.path.basename(dev), "type": "usb"}
         try:
             out = subprocess.run(
@@ -81,6 +84,72 @@ def scan_usb() -> list[dict]:
             pass
         results.append(info)
     return results
+
+
+# ── NHẬN DIỆN NGÔN NGỮ máy in mạng -> chọn backend ĐÚNG ────────────────────────
+#   Trước đây UI đoán mù "socket:9100 = ESC/POS" -> Zebra(ZPL)/laser nhận ESC/POS = RÁC.
+#   Giờ phân loại theo TÊN/model + giao thức + probe IPP: zpl_net | escpos_net | cups.
+_ZPL_HINTS = ("zebra", "zdesigner", "zpl", "zd4", "zd6", "gk420", "gx420", "gc420",
+              "zt2", "zt4", "zq5", "zq6", "zd2")
+_ESCPOS_HINTS = ("epson tm", "tm-t", "tm-m", "tm-p", "star ", "tsp", "xprinter", "goojprt",
+                 "rongta", "munbyn", "pos-", "posprinter", "srp-", "bixolon", "58mm", "80mm",
+                 "thermal", "receipt", "pos58", "pos80", "mtp-")
+
+
+def classify_backend(name: str, protocol: str = "", host: str = "", port: int = 9100) -> str:
+    """Backend khuyến nghị cho 1 máy in mạng: 'zpl_net' | 'escpos_net' | 'cups'."""
+    n = (name or "").lower()
+    if any(h in n for h in _ZPL_HINTS):
+        return "zpl_net"                       # Zebra/ZPL — KHÔNG được gửi ESC/POS
+    if protocol in ("ipp", "ipps", "lpd", "dnssd"):
+        return "cups"                          # nói IPP/LPD = máy in xịn có driver -> CUPS driverless
+    if any(h in n for h in _ESCPOS_HINTS):
+        return "escpos_net"                    # thermal ESC/POS rõ ràng
+    # raw socket:9100 KHÔNG rõ tên: có IPP(631) -> máy in xịn (CUPS); không -> đa số là thermal ESC/POS
+    if host:
+        try:
+            socket.create_connection((host, 631), timeout=1.0).close()
+            return "cups"
+        except Exception:
+            pass
+    return "escpos_net"
+
+
+def manual_entry(address: str) -> dict:
+    """NHẬP IP TAY: user gõ IP / host / IP:port / URI -> dò cổng in + phân loại backend -> entry để add.
+    Cho phép thêm máy in mạng KHÔNG auto-discover (thermal raw :9100 im lặng mDNS/SNMP)."""
+    address = (address or "").strip()
+    if not address:
+        return {"ok": False, "error": "Cần nhập IP/host máy in"}
+    scheme = ""
+    m = re.match(r"^([a-zA-Z]+)://(.+)$", address)
+    rest = m.group(2).split("/")[0] if m else address
+    if m:
+        scheme = m.group(1).lower()
+    host, port = rest, None
+    if ":" in rest and rest.count(":") == 1:
+        h, pt = rest.rsplit(":", 1)
+        if pt.isdigit():
+            host, port = h, int(pt)
+    proto = {"socket": "socket", "tcp": "socket", "ipp": "ipp", "ipps": "ipps",
+             "lpd": "lpd"}.get(scheme, "")
+    if not proto:
+        probe = [(port, None)] if port else [(9100, "socket"), (631, "ipp"), (515, "lpd")]
+        for pt, pr in probe:
+            try:
+                socket.create_connection((host, pt), timeout=1.5).close()
+                port = pt
+                proto = pr or {9100: "socket", 631: "ipp", 515: "lpd"}.get(pt, "socket")
+                break
+            except Exception:
+                continue
+        if not proto:
+            return {"ok": False, "error": f"Không nối được {host} ở cổng in 9100/631/515"}
+    if not port:
+        port = {"socket": 9100, "ipp": 631, "ipps": 631, "lpd": 515}.get(proto, 9100)
+    uri = f"socket://{host}:{port}" if proto == "socket" else f"{proto}://{host}"
+    return {"ok": True, "uri": uri, "host": host, "port": port, "protocol": proto,
+            "name": host, "backend": classify_backend(host, proto, host, port)}
 
 
 # ── Network discovery ─────────────────────────────────────────────────────────
@@ -200,6 +269,8 @@ def scan_network() -> list[dict]:
             r = {**r, "name": prev["name"], "uri": prev["uri"],
                  "host": prev["host"], "protocol": prev["protocol"]}
         _BEST_SEEN[ident] = r
+        # gắn backend KHUYẾN NGHỊ (UI dùng cái này thay vì đoán mù theo scheme)
+        r["backend"] = classify_backend(r.get("name", ""), r.get("protocol", ""), r.get("host", ""))
         out.append(r)
     return out
 

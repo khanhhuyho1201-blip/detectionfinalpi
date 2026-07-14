@@ -19,6 +19,11 @@ import time
 
 from flask import Flask, jsonify, redirect, request, Response
 
+# [gom folder 2026-07] file này nằm ở device_service/wifi/. Khi systemd chạy trực
+#   tiếp .../wifi/wifi_portal.py thì sys.path[0] = wifi/ (không có settings.py) →
+#   thêm thư mục cha device_service/ vào sys.path để 'from settings import settings' chạy.
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from settings import settings
 
 logging.basicConfig(level=logging.INFO,
@@ -40,10 +45,29 @@ app = Flask(__name__)
 
 # ── connection state (set by _do_connect, read by /api/wifi/status) ──────────
 _conn_lock = threading.Lock()
-_conn = {"state": "idle", "error": None}   # state: idle|connecting|ok|error
+# [FIX HIGH 2026-07] Thêm "id" = token của PHIÊN connect đang thắng lock. Nhiều điện
+#   thoại dùng CHUNG _conn toàn cục; nếu không có id, phone THUA poll /api/wifi/status
+#   sẽ đọc state="ok" của phone THẮNG -> hiện "Connected!" giả với tên mạng mình chọn.
+#   Client chỉ chấp nhận ok/error khi status.id === connect_id nó nhận lúc thắng lock.
+_conn = {"state": "idle", "error": None, "id": None}   # state: idle|connecting|ok|error
+_conn_seq = 0
 
 
 def _get_ap_name() -> str:
+    # [FIX HIGH 2026-07] NGUỒN SỰ THẬT = SSID thật của profile AP trong NetworkManager
+    #   (khớp đúng cái wifi_ap.sh đang PHÁT). Trước đây hàm này ĐOÁN "CardFeeder-XXXX"
+    #   trong khi wifi_ap.sh phát "CMD X BBSW" -> lệch: portal hiện sai tên (user tìm
+    #   sai mạng để join) + scan() lọc sai (AP thật lọt vào danh sách chọn).
+    try:
+        r = subprocess.run(
+            ["sudo", "-n", "nmcli", "-t", "-f", "802-11-wireless.ssid", "con", "show", AP_CON],
+            capture_output=True, text=True, timeout=5)
+        real = r.stdout.split(":", 1)[-1].strip() if ":" in r.stdout else ""
+        if real:
+            return real
+    except Exception:
+        pass
+    # Fallback khi profile CHƯA tồn tại: env CARD_AP_SSID -> rồi CardFeeder-<suffix>.
     ssid = settings.wifi.ap_ssid
     if ssid:
         return ssid
@@ -302,6 +326,7 @@ body.preview-mode .wrap{padding-bottom:76px}
 var AP_NAME="__AP_NAME__";
 var screens=["s0","s1","s2","s3","s4","s5","s6","s7"];
 var curSSID="", curSecured=true, pollTimer=null, pollStartedAt=0, connectWatchdogTimer=null, presumedOk=false;
+var wonLock=false, myConnectId=null;   // [FIX] wonLock: chỉ phone THẮNG lock mới poll/hiện success. myConnectId: khớp status.id chống nhầm phiên.
 var isLegacyAndroid=/Android\s(?:4|5|6|7|8|9)\b/i.test(navigator.userAgent||"");
 var PREVIEW_MODE=/(^|[?&])preview=1(&|$)/.test(location.search);
 var STORAGE_KEY="cardfeeder.portal.selection.v2";
@@ -468,18 +493,32 @@ document.getElementById("btnConnect").onclick=function(){
   saveSelection();
   document.getElementById("s4chip").textContent=curSSID;
   go("s4");
+  wonLock=false; myConnectId=null;
   fetch("/api/wifi/connect",{method:"POST",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({ssid:curSSID,password:pw})
   }).then(function(r){return r.json();}).then(function(d){
-    // ĐIỆN THOẠI KHÁC đang connect dở (ai bấm trước thắng) → báo + quay lại
     if(d && d.error==="busy"){
+      // ĐIỆN THOẠI KHÁC đang cấu hình (ai bấm trước thắng) -> KHÔNG poll success,
+      // vào màn CHỜ. [FIX] Trước đây phone thua vẫn startPoll -> đọc state 'ok' của
+      // phone thắng -> hiện "Connected!" GIẢ với tên mạng mình chọn.
       stopPoll();
-      alert("Another phone is setting up this machine. Please wait a moment and try again.");
-      backToPassword();
+      showBusyWait();
+      return;
     }
-  }).catch(function(){});  // response may never arrive if AP drops (phone thắng)
-  startPoll();
+    if(d && d.ok && d.pending){
+      wonLock=true; myConnectId=d.connect_id||null;   // CHỈ phone THẮNG mới poll
+      startPoll();
+      return;
+    }
+    stopPoll(); backToPassword();                       // phản hồi lạ -> nhập lại
+  }).catch(function(){
+    // Mất response NGAY khi POST: phone thua nhận 'busy' trong mili-giây TRƯỚC khi
+    // AP hạ, nên KHÔNG rơi vào đây. Rơi vào đây gần như chắc là phone THẮNG + AP vừa hạ.
+    wonLock=true;
+    startPoll();
+  });
+  // [FIX] KHÔNG startPoll() vô điều kiện ở đây nữa.
 };
 
 // S4 polling
@@ -496,6 +535,20 @@ function startPoll(){
 function stopPoll(){
   if(pollTimer){clearTimeout(pollTimer);pollTimer=null;}
   if(connectWatchdogTimer){clearTimeout(connectWatchdogTimer);connectWatchdogTimer=null;}
+}
+// [FIX] Màn CHỜ cho điện thoại THUA (nhận 'busy'): KHÔNG poll success, chỉ chờ máy
+//   rảnh lại rồi cho thử lại. Không bao giờ hiện "Connected!" cho phone thua.
+function showBusyWait(){
+  stopPoll();
+  var c=document.getElementById("s4chip"); if(c){c.textContent="another device configuring…";}
+  go("s4");
+  pollTimer=setTimeout(busyPoll, 2500);
+}
+function busyPoll(){
+  fetch("/api/wifi/status").then(function(r){return r.json();}).then(function(d){
+    if(d && d.state==="connecting"){ pollTimer=setTimeout(busyPoll, 2500); return; }
+    backToPassword();   // máy rảnh (idle/error/ok) -> cho user thử lại mạng của mình
+  }).catch(function(){ pollTimer=setTimeout(busyPoll, 3500); });  // mất mạng: winner có thể đã đổi mạng -> chờ tiếp
 }
 function backToNetworkList(){
   stopPoll();
@@ -528,7 +581,11 @@ function doPoll(){
   var _ctrl=new AbortController();
   var _t=setTimeout(function(){_ctrl.abort();},2200);
   fetch("/api/wifi/status",{signal:_ctrl.signal}).then(function(r){clearTimeout(_t);return r.json();}).then(function(d){
-    if(d.state==="ok"){
+    // [FIX] Chỉ nhận kết quả của ĐÚNG phiên mình. myConnectId null = thắng qua .catch
+    // (không kịp nhận id) -> bỏ qua check (vẫn là chủ phiên). id KHÁC = state của phiên
+    // phone khác -> KHÔNG nhận (chống "Connected!" giả).
+    var idOk = (!myConnectId) || (d.id===myConnectId);
+    if(idOk && d.state==="ok"){
       stopPoll();
       document.getElementById("s7chip").textContent=curSSID;
       clearSelection();
@@ -536,7 +593,7 @@ function doPoll(){
       tryClosePortalWindow();
       return;
     }
-    if(d.state==="error"){
+    if(idOk && d.state==="error"){
       if(d.error==="not_found"){
         backToNetworkList();
       } else {
@@ -558,7 +615,7 @@ function doPoll(){
     // phải lỗi. Không có network để hỏi /api/wifi/status nữa nên coi như đã
     // xong, đồng thời vẫn poll nền (ít dày hơn) để bắt lỗi thật nếu AP được
     // bật lại (sai mật khẩu / không tìm thấy mạng).
-    if(!presumedOk){
+    if(wonLock && !presumedOk){   // [FIX] CHỈ phone THẮNG lock mới được "presumed success" khi AP mất
       presumedOk=true;
       document.getElementById("s7chip").textContent=curSSID;
       clearSelection();
@@ -635,6 +692,7 @@ def index():
         if _conn["state"] in ("ok", "error"):
             _conn["state"] = "idle"
             _conn["error"] = None
+            _conn["id"] = None
     return _build_page()
 
 
@@ -714,7 +772,7 @@ def scan():
 @app.route("/api/wifi/status")
 def wifi_status():
     with _conn_lock:
-        return jsonify({"state": _conn["state"], "error": _conn["error"]})
+        return jsonify({"state": _conn["state"], "error": _conn["error"], "id": _conn["id"]})
 
 
 @app.route("/api/wifi/connect", methods=["POST"])
@@ -730,10 +788,14 @@ def connect():
         if _conn["state"] == "connecting":
             return jsonify({"ok": False, "error": "busy",
                             "message": "Another phone is connecting — wait a moment"})
+        global _conn_seq
+        _conn_seq += 1
+        _conn["id"] = str(_conn_seq)          # token cho phiên THẮNG này
         _conn["state"] = "connecting"
         _conn["error"] = None
+        cid = _conn["id"]
     threading.Thread(target=_do_connect, args=(ssid, password), daemon=True).start()
-    return jsonify({"ok": True, "pending": True})
+    return jsonify({"ok": True, "pending": True, "connect_id": cid})
 
 
 def _notify_kiosk_connected():

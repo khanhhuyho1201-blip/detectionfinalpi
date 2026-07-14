@@ -1,0 +1,22 @@
+[Unit]
+Description=Card Feeder — WiFi watchdog (auto AP when no home WiFi)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+# [gom folder 2026-07] file wifi_* đã chuyển vào device_service/wifi/.
+# WorkingDirectory giữ ở device_service/ — wifi_watchdog.py tự thêm thư mục này vào
+# sys.path (shim) để 'from settings import settings' chạy được.
+WorkingDirectory=/home/bbsw/workspace/detectionfinalpi/device_service
+ExecStart=/home/bbsw/workspace/detectionfinalpi/.venv/bin/python -u /home/bbsw/workspace/detectionfinalpi/device_service/wifi/wifi_watchdog.py
+Environment=CARD_WIFI_IFACE=wlan0
+Environment=CARD_WIFI_GRACE=40
+# AP tự hạ sau 600s nếu không ai cấu hình (an toàn khi test từ xa).
+# Sản xuất thực thụ: đặt CARD_AP_TIMEOUT=0 để AP giữ tới khi cấu hình xong.
+Environment=CARD_AP_TIMEOUT=600
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

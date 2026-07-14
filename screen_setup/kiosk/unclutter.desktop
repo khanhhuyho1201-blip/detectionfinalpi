@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=unclutter (hide cursor)
+Comment=Ẩn con trỏ chuột cho server cảm ứng
+Exec=unclutter-xfixes --start-hidden --hide-on-touch --timeout 1
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

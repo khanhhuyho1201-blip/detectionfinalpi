@@ -1,0 +1,16 @@
+
+[Unit]
+Documentation=man:systemd-xdg-autostart-generator(8)
+SourcePath=/home/bbsw/.config/autostart/cardfeeder.desktop
+PartOf=graphical-session.target
+
+Description=Card Feeder (kiosk)
+After=graphical-session.target
+
+[Service]
+Type=exec
+ExitType=cgroup
+ExecStart=:/home/bbsw/.local/bin/card-feeder-launch.sh
+Restart=no
+TimeoutStopSec=5s
+Slice=app.slice

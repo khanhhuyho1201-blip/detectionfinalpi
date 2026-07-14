@@ -1,7 +1,7 @@
 # BA — Danh mục lỗi & nội dung hiển thị (Card Feeder)
 
 > Phân tích từ code thực tế: `server.py`, `controller.py`, `api_client.py`,
-> `camera.py`, `serial_link.py`, `parser.py`, firmware `Test.ino`.
+> `camera.py`, `serial_link.py`, `parser.py`, firmware `production.ino`.
 > Mục tiêu: mỗi tình huống lỗi → **một mã lỗi + một dòng hiển thị chuẩn máy móc**
 > (ngắn, danh từ hoá, không văn nói) + hướng dẫn xử lý + nút thao tác.
 

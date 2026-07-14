@@ -82,18 +82,21 @@ class SerialLink:
                 self._sim.handle_command(cmd)
                 return True
             return False
+        # [hardening v28.3] GHI trong lock: heartbeat 400ms + model-speed + watchdog +
+        #   run_cycle cùng gọi send() -> ghi/flush ngoài lock có thể chèn byte 2 lệnh vào
+        #   nhau (dù GIL giảm rủi ro, giữ lock là ĐÚNG tuyệt đối, khỏi phụ thuộc GIL).
         with self._lock:
             ser = self._ser
-        if ser is None:
-            logger.warning("send(%r) dropped — port not open", cmd)
-            return False
-        try:
-            ser.write((cmd + "\n").encode("ascii", "ignore"))
-            ser.flush()
-            return True
-        except Exception as e:
-            logger.warning("send(%r) failed: %s", cmd, e)
-            return False
+            if ser is None:
+                logger.warning("send(%r) dropped — port not open", cmd)
+                return False
+            try:
+                ser.write((cmd + "\n").encode("ascii", "ignore"))
+                ser.flush()
+                return True
+            except Exception as e:
+                logger.warning("send(%r) failed: %s", cmd, e)
+                return False
 
     # ── internals ──
     def _emit_line(self, line: str) -> None:
