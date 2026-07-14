@@ -377,13 +377,7 @@
   .prnPairBtn{padding:.42rem .9rem;border-radius:9px;border:1px solid var(--blue);
     background:rgba(122,160,238,.08);color:var(--blue);font-size:14px;font-weight:600;cursor:pointer;font-family:var(--sans);flex-shrink:0;transition:background .15s}
   .prnPairBtn:hover{background:rgba(122,160,238,.2)}
-  /* manual entry — nhập IP tay */
-  .prnManualRow{display:flex;gap:6px;margin-top:8px}
-  .prnManualIp{flex:1;min-width:0;padding:.5rem .7rem;border-radius:9px;border:1px solid var(--line);
-    background:rgba(255,255,255,.04);color:var(--text);font-size:14px;font-family:var(--mono)}
-  .prnManualIp:focus{outline:none;border-color:var(--gold)}
-  html.kiosk .prnManualIp{min-height:44px;font-size:15px}
-  html.kiosk .prnManualRow .prnAddBtn{min-height:44px}
+  /* manual entry — (ô nhập IP đã gỡ khỏi UI theo yêu cầu; BE /api/printer/manual vẫn còn) */
   /* message */
   .prnMsg{font-size:13px;color:var(--dim);min-height:1rem;text-align:center;padding:.1rem 0}
   .prnMsg.ok{color:var(--green)} .prnMsg.err{color:var(--red)}
@@ -923,12 +917,6 @@
       <div class="prnScanBox">
         <button class="prnActBtn" id="prnScanWifi">Scan network</button>
         <div class="prnList" id="prnListWifi"></div>
-        <!-- Nhập IP tay: cho máy in mạng KHÔNG auto-discover (thermal raw :9100 im lặng mDNS) -->
-        <div class="prnManualRow">
-          <input id="prnManualIp" class="prnManualIp" type="text" inputmode="decimal"
-                 placeholder="Add by IP (e.g. 192.168.1.50)" autocomplete="off" spellcheck="false">
-          <button class="prnAddBtn" id="prnManualAdd">Add</button>
-        </div>
       </div>
     </div>
 
@@ -1695,20 +1683,6 @@
           list.appendChild(mkCard(p.name,p.uri||p.host,function(){confirmChangePrinter(p.name,function(){addByUri(p);});},"prnAddBtn"));
         });
       }).catch(function(){btn.disabled=false;btn.textContent="Scan network";msg("Scan failed","err");});
-    });
-
-    // Add by IP tay: máy in mạng KHÔNG auto-discover -> BE dò cổng (9100/631/515) + phân loại backend.
-    var _mAdd=$("prnManualAdd");
-    if(_mAdd) _mAdd.addEventListener("click",function(){
-      var ip=($("prnManualIp").value||"").trim();
-      if(!ip){msg("Enter printer IP","err");return;}
-      var btn=this; btn.disabled=true; var _o=btn.textContent; btn.textContent="…";
-      fetch("/api/printer/manual",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({address:ip})})
-        .then(function(r){return r.json();}).then(function(d){
-          btn.disabled=false; btn.textContent=_o;
-          if(!d.ok){msg(d.error||"Not reachable","err");return;}
-          confirmChangePrinter(d.name,function(){ $("prnManualIp").value=""; addByUri(d); });
-        }).catch(function(){btn.disabled=false;btn.textContent=_o;msg("Error","err");});
     });
 
     // Scan Bluetooth — UI sạch như tab WiFi, phản hồi qua prnMsg.

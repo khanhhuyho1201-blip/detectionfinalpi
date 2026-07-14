@@ -148,6 +148,12 @@ class SerialLink:
                     if not chunk:
                         continue  # read timeout, nothing yet
                     buf += chunk
+                    # [review v28.3] CHỐNG PHÌNH RAM 24/7: nếu tích >4KB mà KHÔNG có ký tự xuống
+                    #   dòng = mất khung/rác liên tục (nhiễu điện, dây rung, chip lỗi) -> bỏ sạch,
+                    #   khỏi tích vô hạn. Dòng ST/[STATUS] thật luôn < ~500B nên 4KB là an toàn tuyệt đối.
+                    if len(buf) > 4096 and b"\n" not in buf:
+                        logger.warning("serial: %dB không có xuống dòng -> bỏ rác (reset framing)", len(buf))
+                        buf = b""
                     while b"\n" in buf:
                         raw, buf = buf.split(b"\n", 1)
                         text = raw.decode("utf-8", "replace").strip("\r\n ")
