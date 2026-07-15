@@ -25,10 +25,11 @@ from api_client import APIClient
 from camera import TMP_DIR, Recorder, delete_video, probe as camera_probe
 from parser import MachineStatus, parse_line, ERR_LINK, ERR_SENSOR
 
-# v29: giải mã bitmask hw= từ firmware -> tên phần cứng (dùng nguyên văn trên chip/popup + gate START)
-_HW_NAMES = [(0x01, "Cảm biến / khay bài"),
+# v29: giải mã bitmask hw= từ firmware -> tên phần cứng (hiện trên chip/popup + gate START)
+# UI 100% tiếng Anh, KHÔNG kèm tên chân (yêu cầu 2026-07-15)
+_HW_NAMES = [(0x01, "Sensor / card tray"),
              (0x02, "Motor / encoder"),
-             (0x04, "Công tắc / stepper")]
+             (0x04, "Limit switch / stepper")]
 from printer import print_run_qr, printer_available
 from settings import settings
 
