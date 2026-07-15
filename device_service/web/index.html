@@ -1472,6 +1472,10 @@
   // few ms instead of waiting up to a whole poll interval → taps feel real-time.
   function pollNow(){ if(_pollTimer){clearTimeout(_pollTimer);_pollTimer=null;} poll(); }
   poll();
+  // [v29.3] Giữ Recent-runs luôn TƯƠI để mở Settings là hiện ngay cùng lúc với Printer/WiFi
+  //   (hết cảnh runs pop-in trễ). Rẻ: 1 lần đọc history / 3s; thay innerHTML nên không rò bộ nhớ.
+  loadHistory();
+  setInterval(loadHistory, 3000);
 
   // the single main button carries whatever action the current state needs
   function doAct(a){
@@ -1502,8 +1506,12 @@
   function openS(o){sheet.classList.toggle("open",o);scrim.classList.toggle("open",o);
     if(o){loadHistory();loadDevice();}}
   $("gear").addEventListener("click",function(){openS(true);});
-  // Server icon: while un-connected it pulses (.needenroll) — tap it to OPEN the
-  // enroll QR popup; tap the dark area outside the QR to close it.
+  // Server icon: DIM (never blinking) until the machine is enrolled. While it
+  // still needs enrolling (.needenroll) it is tappable — tap to OPEN the enroll
+  // QR popup; tap the dark area outside the QR to close it. Once enrolled the
+  // icon lights and .needenroll is gone, so it is no longer tappable (set up once).
+  // If an admin later deletes the device, the backend drops creds → un-enrolled
+  // again → the icon dims and becomes tappable for a fresh pairing.
   var _cbtn=$("conn"); if(_cbtn) _cbtn.addEventListener("click",function(){
     if(!_cbtn.classList.contains("needenroll")) return;
     var ef=$("enrollfull");
@@ -1918,6 +1926,10 @@
 
     // Refresh status when Settings sheet opens
     $("gear").addEventListener("click",function(){loadPrinterStatus();});
+    // [v29.3] Giữ hàng Printer luôn TƯƠI (như hàng WiFi trong vòng poll) -> mở Settings là 3 phần
+    //   (recent runs + printer + wifi) hiện ĐỒNG BỘ cùng lúc, không pop-in trễ. Rẻ: 1 probe/3s.
+    loadPrinterStatus();                                    // pre-warm ngay khi tải trang
+    setInterval(loadPrinterStatus, 3000);                  // giữ ấm nền
   })();
 
   addEventListener("resize",sizeCanvas);
