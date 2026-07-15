@@ -29,3 +29,6 @@ card_device/*.bak.*
 # backup dirs/files kiểu .bak_pair_..., .index.bak_popup
 .bak_*/
 *.bak_*
+
+# backup tự động khi chỉnh icon (rác, không commit)
+device_service/.icon_backup/

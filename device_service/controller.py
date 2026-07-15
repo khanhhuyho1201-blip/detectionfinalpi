@@ -247,23 +247,103 @@ class Controller:
             return None
         return APIClient(creds["server_url"], creds["device_id"], creds["device_key"])
 
+    # ── heartbeat hysteresis (server-icon anti-flicker) ──────────────────────
+    # The server icon on the kiosk = self._online. It must be STABLE: only DIM
+    # (mờ) or LIT (sáng), never blinking. The test server's link to
+    # cmdtest.berp.vn drops the odd heartbeat (Read-timeout / connection-reset
+    # every 1–3 min); binding the icon straight to one heartbeat made it flicker.
+    # So we keep it LIT through short outages and only dim it after the server
+    # has been unreachable continuously for HB_OFFLINE_GRACE seconds — i.e. a
+    # real "rớt mạng / sập server", not a blip. It re-lights on the first success.
+    #
+    # [v29.4 user 2026-07-15] "check mỗi 5s, mất tín hiệu là mờ NGAY, không quá lâu":
+    #   poll = 5s (đồng bộ với printer/wifi), grace = 6s -> icon mờ trong ~6-8s khi RỚT
+    #   THẬT (2 nhịp trượt liên tiếp), nhưng 1 gói rớt lẻ (recover ở nhịp poll-nhanh 2s kế)
+    #   VẪN không mờ -> nhanh mà KHÔNG nhấp nháy (giữ đúng yêu cầu "không nháy" trước đó).
+    HB_OFFLINE_GRACE = 6.0    # continuous-failure seconds before the icon dims (was 25)
+    HB_GONE_AFTER = 2         # consecutive authoritative "deleted" before self-unenroll
+
+    @staticmethod
+    def _hb_step(st, hb, now):
+        """Pure state transition for the heartbeat signal — no I/O, so it is unit
+        tested in isolation (test_server_icon_virtual.py).
+
+        st: {'last_ok': float, 'gone': int, 'online': bool, 'locked': bool}
+        hb: True | 'locked' | 'gone' | False   (result of APIClient.heartbeat())
+        now: monotonic seconds
+        returns (new_st, action) where action ∈ {None, 'unenroll'}.
+
+        Rules:
+          • True/'locked'  → server reachable → LIT, reset counters.
+          • 'gone'         → authoritative delete; after HB_GONE_AFTER in a row →
+                             action='unenroll'. NOT a network guess.
+          • False          → keep the LAST state until the outage has lasted
+                             HB_OFFLINE_GRACE seconds, then dim. Absorbs blips.
+        """
+        if hb is True or hb == "locked":
+            return ({"last_ok": now, "gone": 0, "online": True,
+                     "locked": (hb == "locked")}, None)
+        if hb == "gone":
+            gone = st["gone"] + 1
+            if gone >= Controller.HB_GONE_AFTER:
+                return ({"last_ok": st["last_ok"], "gone": gone,
+                         "online": False, "locked": False}, "unenroll")
+            online = st["online"] and (now - st["last_ok"] < Controller.HB_OFFLINE_GRACE)
+            return ({"last_ok": st["last_ok"], "gone": gone,
+                     "online": online, "locked": False}, None)
+        # False → transient timeout or a real outage; hold, then dim after grace.
+        online = st["online"] and (now - st["last_ok"] < Controller.HB_OFFLINE_GRACE)
+        return ({"last_ok": st["last_ok"], "gone": 0,
+                 "online": online, "locked": False}, None)
+
+    def _handle_deprovisioned(self):
+        """Server said this device no longer exists (admin deleted it). Drop the
+        local credentials so the kiosk falls back to the un-enrolled state: the
+        server icon goes DIM and TAPPABLE again, ready for a fresh QR pairing —
+        exactly the "admin xoá device → setup lại" flow. This runs ONLY on a
+        confirmed device_not_found from the server (HB_GONE_AFTER times), never on
+        a network error, so a flaky link can never wipe a good machine's creds."""
+        try:
+            settings.credentials.clear()
+        except Exception as e:
+            logger.warning("clear creds failed on deprovision: %s", e)
+        with self._lock:
+            self._client = None
+            self._online = False
+            self._server_locked = False
+            self._pair = None            # let the FE begin a fresh pairing session
+            if self._recording:
+                try:
+                    self.cancel()        # a deleted device must not keep a run alive
+                except Exception:
+                    pass
+        logger.warning("DEVICE DEPROVISIONED by server (deleted) -> creds cleared, "
+                       "awaiting re-pair via QR")
+
     def _start_heartbeat(self):
-        # Poll fast (3s) while offline so a just-booted Pi or a flaky network
-        # recovers the "online" badge quickly; 10s when online (đủ nhanh để
-        # lệnh Khoá từ admin có hiệu lực trong ~10s); 5s khi ĐANG bị khoá để
-        # admin Mở khoá là máy nhả ra ngay.
+        # Cadence: 10s when solidly online; 3s while offline or just-missed (fast
+        # recovery / fast delete-detection); 5s while locked so an admin Unlock is
+        # released promptly. Icon brightness is driven by _hb_step (hysteresis).
         def loop():
+            st = {"last_ok": time.monotonic(), "gone": 0,
+                  "online": self._online, "locked": self._server_locked}
             while True:
+                last_ok_now = False
                 if self._client:
                     try:
                         hb = self._client.heartbeat()
                     except Exception:
                         hb = False
+                    last_ok_now = (hb is True or hb == "locked")
                     was_locked = self._server_locked
-                    self._server_locked = (hb == "locked")
-                    # locked = server VẪN liên lạc được (chỉ là từ chối) → online
-                    self._online = (hb is True) or self._server_locked
-                    if self._server_locked and not was_locked:
+                    st, action = self._hb_step(st, hb, time.monotonic())
+                    self._server_locked = st["locked"]
+                    self._online = st["online"]
+                    if action == "unenroll":
+                        self._handle_deprovisioned()
+                        st = {"last_ok": time.monotonic(), "gone": 0,
+                              "online": False, "locked": False}
+                    elif self._server_locked and not was_locked:
                         logger.warning("ADMIN LOCK: server khoá thiết bị -> khoá màn hình")
                         if self._recording:
                             try:
@@ -272,7 +352,14 @@ class Controller:
                                 pass
                     elif was_locked and not self._server_locked:
                         logger.warning("ADMIN UNLOCK: thiết bị được mở khoá")
-                time.sleep(5 if self._server_locked else (10 if self._online else 3))
+                if not self._client:
+                    time.sleep(3)                      # un-enrolled → idle wait
+                elif self._server_locked:
+                    time.sleep(5)
+                elif self._online and last_ok_now:
+                    time.sleep(5)                      # v29.4: online -> check mỗi 5s (đồng bộ printer/wifi)
+                else:
+                    time.sleep(2)                      # offline / suspect → poll NHANH 2s để xác nhận rớt/hồi
         threading.Thread(target=loop, daemon=True).start()
 
     # ── serial ──

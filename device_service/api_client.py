@@ -36,12 +36,20 @@ class APIClient:
     # refresh the access token when it has less than this many seconds left
     _REFRESH_SKEW = 120
 
+    # Server responses that mean "this device no longer exists" — an authoritative,
+    # irreversible deprovision (admin deleted the device). heartbeat() maps these
+    # to "gone" so the controller can drop local creds and return to un-enrolled.
+    # A network/timeout error is NEVER in here — it returns plain False — so a
+    # flaky link can never be mistaken for a deletion.
+    _GONE_REASONS = ("device_not_found",)
+
     def __init__(self, server_url: str, device_id: str, device_key: str):
         self.server_url = server_url.rstrip("/")
         self.device_id = device_id
         self.device_key = device_key
         self._access_token = None
         self._token_exp = 0.0          # epoch seconds when the token expires
+        self._token_ttl = 3600.0       # lifetime of the current token (from expires_in)
         self._session_token = None     # current run's session token
 
     def _url(self, path: str) -> str:
@@ -63,11 +71,18 @@ class APIClient:
             raise AuthError(f"token rejected: HTTP {r.status_code} {self._reason(r)}")
         data = r.json()
         self._access_token = data["access_token"]
-        self._token_exp = time.time() + int(data.get("expires_in", 3600))
+        self._token_ttl = float(int(data.get("expires_in", 3600)))
+        self._token_exp = time.time() + self._token_ttl
         logger.info("got device access token (expires in %ss)", data.get("expires_in"))
 
     def _ensure_token(self) -> None:
-        if not self._access_token or time.time() >= self._token_exp - self._REFRESH_SKEW:
+        # Refresh EARLY by _REFRESH_SKEW — but never earlier than half the token's
+        # own lifetime, otherwise a short-TTL token (e.g. server issues 120s while
+        # skew is 120s) would be "about to expire" on every single call and get
+        # re-minted each heartbeat: an extra round-trip that hammered the server
+        # and doubled the chance of a timeout (→ the flickering "online" icon).
+        skew = min(self._REFRESH_SKEW, self._token_ttl * 0.5)
+        if not self._access_token or time.time() >= self._token_exp - skew:
             self._fetch_token()
 
     def _auth_headers(self, with_session: bool = False) -> dict:
@@ -105,18 +120,27 @@ class APIClient:
 
     # ── API ──
     def heartbeat(self):
-        """True = OK | "locked" = bị admin khoá từ xa | False = mất server/lỗi."""
+        """True = OK | "locked" = bị admin khoá từ xa (thuận nghịch) |
+        "gone" = admin ĐÃ XOÁ device khỏi server (dứt khoát) |
+        False = mất server/timeout/lỗi mạng (KHÔNG kết luận gì về trạng thái device)."""
         try:
             r = self._request("POST", "/api/device/heartbeat", timeout=5)
             if r.status_code == 200:
                 return True
-            if r.status_code == 403 and self._reason(r) == "device_locked":
+            reason = self._reason(r)
+            if r.status_code == 403 and reason == "device_locked":
                 return "locked"
+            if reason in self._GONE_REASONS:
+                return "gone"
             return False
         except AuthError as e:
-            # token bị từ chối ngay từ bước mint (key-auth) — cũng có thể do khoá
-            if "device_locked" in str(e):
+            # token bị từ chối ngay từ bước mint (key-auth) — phân biệt khoá tạm
+            # (locked) vs đã xoá hẳn (gone) vs lỗi auth/mạng khác (False).
+            s = str(e)
+            if "device_locked" in s:
                 return "locked"
+            if any(reason in s for reason in self._GONE_REASONS):
+                return "gone"
             logger.warning(f"Heartbeat failed: {e}")
             return False
         except Exception as e:
