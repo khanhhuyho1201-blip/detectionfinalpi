@@ -124,7 +124,10 @@ class APIClient:
         "gone" = admin ĐÃ XOÁ device khỏi server (dứt khoát) |
         False = mất server/timeout/lỗi mạng (KHÔNG kết luận gì về trạng thái device)."""
         try:
-            r = self._request("POST", "/api/device/heartbeat", timeout=5)
+            # v29.5: timeout 5->12s. Server test cmdtest.berp.vn phản hồi 0.7-11.5s (đo thật
+            #   2026-07-15) -> 5s cắt oan request server ĐANG SỐNG chỉ CHẬM -> icon nháy tắt.
+            #   Server CHẾT thật (refused/no-route/reset) vẫn fail NHANH ở bước connect -> mờ nhanh.
+            r = self._request("POST", "/api/device/heartbeat", timeout=12)
             if r.status_code == 200:
                 return True
             reason = self._reason(r)

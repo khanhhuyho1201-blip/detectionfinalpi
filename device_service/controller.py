@@ -256,11 +256,11 @@ class Controller:
     # has been unreachable continuously for HB_OFFLINE_GRACE seconds — i.e. a
     # real "rớt mạng / sập server", not a blip. It re-lights on the first success.
     #
-    # [v29.4 user 2026-07-15] "check mỗi 5s, mất tín hiệu là mờ NGAY, không quá lâu":
-    #   poll = 5s (đồng bộ với printer/wifi), grace = 6s -> icon mờ trong ~6-8s khi RỚT
-    #   THẬT (2 nhịp trượt liên tiếp), nhưng 1 gói rớt lẻ (recover ở nhịp poll-nhanh 2s kế)
-    #   VẪN không mờ -> nhanh mà KHÔNG nhấp nháy (giữ đúng yêu cầu "không nháy" trước đó).
-    HB_OFFLINE_GRACE = 6.0    # continuous-failure seconds before the icon dims (was 25)
+    # [v29.5 user 2026-07-15] Server test cmdtest.berp.vn phản hồi 0.7-11.5s (đo thật) -> rất chậm.
+    #   Chốt: heartbeat timeout 12s (api_client) để request server-CHẬM vẫn kịp xong (hết rớt oan),
+    #   grace = 10s -> icon chỉ mờ khi server RỚT THẬT liên tục 10s (server chết fail nhanh ở connect).
+    #   -> icon KHÔNG nháy tắt vì server chậm, mà vẫn mờ trong ~10s khi mất thật. (poll 5s giữ nguyên)
+    HB_OFFLINE_GRACE = 10.0   # continuous-failure seconds before the icon dims (25->6->10)
     HB_GONE_AFTER = 2         # consecutive authoritative "deleted" before self-unenroll
 
     @staticmethod
