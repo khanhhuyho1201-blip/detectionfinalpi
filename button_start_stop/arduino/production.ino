@@ -122,6 +122,26 @@ uint16_t       homeDelayUs           = STEP_DELAY_HOME_US;  // tốc HOME hiện
 const uint8_t  CARD_PRESENT_LEVEL = LOW;   // mức digitalRead khi CÓ lá che (TEST đã xác nhận = LOW)
 const uint16_t SENSOR_CLEAR_MS    = 40;    // DEBOUNCE sườn: mức mới phải ỔN ĐỊNH >= ms này mới nhận
                                            // -> nhấp nháy < ms này bị bỏ qua (mép lá, khe in...)
+// ===== v29.1 SENSOR-WIRE PROBE — phát hiện RÚT DÂY cảm biến ngay khi máy ĐỨNG YÊN =====
+//   Module TCRT5000 (LM393) có pull-up RIÊNG trên board -> khi NỐI, chân DO luôn được lái
+//   chủ động (HIGH qua pull-up module, LOW qua LM393 khi có lá). Khi RÚT, D4 thả nổi.
+//   Probe: lái D4 XUỐNG 3us -> thả (INPUT, KHÔNG pull) -> chờ 30us -> đọc:
+//     HIGH = pull-up module kéo lên -> DÂY CÒN NỐI | LOW = thả nổi giữ điện tích -> RÚT DÂY.
+//   CHỈ probe khi KHÔNG chạy (không nhiễu đếm lá) + raw đang HIGH (raw LOW = LM393 đang kéo
+//   = chắc chắn còn nối). KHÔNG bao giờ lái HIGH -> không bao giờ đối đầu LM393 (an toàn).
+//   4 probe "rút" liên tiếp (~2s) mới báo (chống nhiễu); 2 probe "nối" là tự xoá khi cắm lại.
+const uint16_t SNS_PROBE_MS = 500;   // chu kỳ probe lúc đứng yên
+const uint8_t  SNS_FAIL_N   = 4;     // số lần "rút" liên tiếp mới báo
+const uint8_t  SNS_OK_N     = 2;     // số lần "nối" liên tiếp để xoá
+bool     sensorWireOk   = true;
+uint8_t  snsFail = 0, snsOk = 0;
+uint32_t lastSnsProbeMs = 0;
+// v29.2: ENCODER D2/D3 cũng là module CHỦ ĐỘNG (quadrature có mạch lái) -> probe được y hệt.
+//   "Rút" CHỈ khi CẢ 2 kênh cùng thả nổi (1 kênh còn lái = encoder còn nối — 2 kênh nghỉ
+//   ở mức tuỳ vị trí trục nên phải xét cả cặp). Phantom-edge do probe vô hại lúc đứng yên
+//   (encoderCount xoá atomic ở doMachineOn; đếm chỉ dùng khi RUNNING).
+bool     encoderWireOk  = true;
+uint8_t  encFail = 0, encOk = 0;
 // [v2] Đã BỎ công tắc máy A0 — máy chạy/dừng 100% bằng serial B1/B0 từ Pi.
 
 // --- ĐO LÁ BẰNG ENCODER (bất biến theo tốc độ) + PHÁT HIỆN CỤM ---
@@ -1184,6 +1204,8 @@ void emitStatus()
     Serial.print(F(" tot="));  Serial.print(batchTarget);
     Serial.print(F(" err="));  Serial.print(err);
     Serial.print(F(" spd="));  Serial.print(motorPWM);
+    Serial.print(F(" sns="));  Serial.print(sensorWireOk ? 1 : 0);  // v29.1: dây cảm biến (probe idle) — 0 = RÚT, tự hồi khi cắm lại
+    Serial.print(F(" enc="));  Serial.print(encoderWireOk ? 1 : 0); // v29.2: dây encoder D2/D3 (probe idle) — 0 = RÚT, tự hồi
     Serial.print(F(" hw="));   Serial.print(hwFault);      // v29: bitmask latch phan cung (0 = khoe) -> Pi lam mo icon + chan START
     // v28.2 HOME-GATING: Pi doc lim de MO/KHOA nut START (1 = dang cham cong tac top = home chuan).
     Serial.print(F(" lim="));  Serial.println(limitHit() ? 1 : 0);
@@ -1201,6 +1223,20 @@ void doMachineOn()
     if (STEPPER_ENABLED && !limitHit()) {
         runStatus = RS_ERROR; lastErr = EF_NOHOME;
         Serial.println(F("\n[NOHOME] B1 TU CHOI: platform chua cham cong tac top. Gui B0 de home roi start lai."));
+        emitStatus();
+        return;
+    }
+    // v29.1: probe idle bao DAY CAM BIEN dang RUT -> tu choi B1 (tu mo lai khi cam day, khong can HOME)
+    if (!sensorWireOk) {
+        runStatus = RS_ERROR; lastErr = EF_SENSOR;
+        Serial.println(F("\n[SENSOR] B1 TU CHOI: day cam bien D4 dang RUT. Cam lai la chay duoc ngay."));
+        emitStatus();
+        return;
+    }
+    // v29.2: encoder dang RUT -> motor se chay MU (khong phanh toc/dem) -> tu choi B1
+    if (!encoderWireOk) {
+        runStatus = RS_ERROR; lastErr = EF_NOMOTOR;
+        Serial.println(F("\n[ENCODER] B1 TU CHOI: day encoder D2/D3 dang RUT. Cam lai la chay duoc ngay."));
         emitStatus();
         return;
     }
@@ -1477,6 +1513,23 @@ void setup()
 // ======================================================
 // LOOP
 // ======================================================
+// v29.1/29.2: probe dây tín hiệu module CHỦ ĐỘNG (xem chú thích khối SNS_*). true = CÒN NỐI.
+//   Dùng chung cho cảm biến D4 + encoder D2/D3 (module có mạch lái riêng).
+bool probeWirePresence(uint8_t pin)
+{
+    if (digitalRead(pin) == LOW) return true;          // module đang kéo LOW -> chắc chắn còn nối
+    pinMode(pin, OUTPUT); digitalWrite(pin, LOW);      // xả điện tích chân (3us, không đối đầu mạch lái)
+    delayMicroseconds(3);
+    pinMode(pin, INPUT);                               // thả nổi — KHÔNG pull nội
+    delayMicroseconds(30);                             // pull-up/mạch lái module kéo lên ~1-3us; 30us dư cáp dài
+    bool wired = (digitalRead(pin) == HIGH);           // HIGH = module kéo = còn nối; LOW = thả nổi = rút
+    pinMode(pin, INPUT_PULLUP);                        // trả về chế độ thường
+    return wired;
+}
+bool probeSensorWire()  { return probeWirePresence(SENSOR_PIN); }
+// encoder: "rút" CHỈ khi CẢ 2 kênh cùng thả nổi (1 kênh còn lái = còn nối)
+bool probeEncoderWire() { return probeWirePresence(ENC_A) || probeWirePresence(ENC_B); }
+
 void loop()
 {
     wdt_reset();
@@ -1494,6 +1547,41 @@ void loop()
     }
 
     handleSerialCommand();   // [v2] Nguồn BẬT/TẮT máy DUY NHẤT: lệnh serial B1/B0 từ Pi (công tắc A0 đã gỡ).
+
+    // ===== v29.1/29.2: probe dây cảm biến + encoder lúc KHÔNG chạy (~70us mỗi 500ms, rollover-safe) =====
+    if (machineState != RUNNING && (uint32_t)(millis() - lastSnsProbeMs) >= SNS_PROBE_MS) {
+        lastSnsProbeMs = millis();
+        if (probeSensorWire()) {
+            snsFail = 0;
+            if (!sensorWireOk && ++snsOk >= SNS_OK_N) {
+                sensorWireOk = true; snsOk = 0;
+                Serial.println(F("[SENSOR] day cam bien DA NOI LAI (probe idle OK)"));
+                emitStatus();                       // bao Pi NGAY -> icon sang lai
+            }
+        } else {
+            snsOk = 0;
+            if (sensorWireOk && ++snsFail >= SNS_FAIL_N) {
+                sensorWireOk = false; snsFail = 0;
+                Serial.println(F("\n[SENSOR] RUT DAY / MAT cam bien D4 (probe luc dung yen)"));
+                emitStatus();                       // bao Pi NGAY -> icon mo + popup
+            }
+        }
+        if (probeEncoderWire()) {
+            encFail = 0;
+            if (!encoderWireOk && ++encOk >= SNS_OK_N) {
+                encoderWireOk = true; encOk = 0;
+                Serial.println(F("[ENCODER] day encoder DA NOI LAI (probe idle OK)"));
+                emitStatus();
+            }
+        } else {
+            encOk = 0;
+            if (encoderWireOk && ++encFail >= SNS_FAIL_N) {
+                encoderWireOk = false; encFail = 0;
+                Serial.println(F("\n[ENCODER] RUT DAY / MAT encoder D2/D3 (probe luc dung yen)"));
+                emitStatus();
+            }
+        }
+    }
 
     if (machineState != RUNNING) return;    // CỔNG chạy = machineState (chỉ serial B1/B0 bật được)
 

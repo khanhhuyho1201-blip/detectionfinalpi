@@ -52,6 +52,11 @@ class MachineStatus:
     homed: bool = True
     # v29: bitmask latch phần cứng từ firmware (0 = khỏe). Firmware cũ (không gửi hw=) -> 0.
     hw: int = 0
+    # v29.1: dây cảm biến D4 (probe lúc đứng yên). False = RÚT DÂY; tự hồi khi cắm lại.
+    # Firmware cũ/sim không gửi sns= -> True (không bịa lỗi).
+    sensor_ok: bool = True
+    # v29.2: dây encoder D2/D3 (probe lúc đứng yên) — như sensor_ok.
+    encoder_ok: bool = True
 
     def copy(self) -> "MachineStatus":
         return replace(self)
@@ -113,6 +118,16 @@ def parse_line(line: str, st: MachineStatus) -> tuple[MachineStatus, str]:
             s.hw = _to_int(kv["hw"], 0)
         else:
             s.hw = 0
+        # v29.1: sns= dây cảm biến (probe idle). Không có field -> True (firmware cũ/sim).
+        if "sns" in kv:
+            s.sensor_ok = kv["sns"].strip() == "1"
+        else:
+            s.sensor_ok = True
+        # v29.2: enc= dây encoder (probe idle) — như sns.
+        if "enc" in kv:
+            s.encoder_ok = kv["enc"].strip() == "1"
+        else:
+            s.encoder_ok = True
         # firmware flags a real-time clump via err=CLUMP while still RUN —
         # surface it as a transient warning (yellow) without ending the batch.
         if s.error == ERR_CLUMP and s.state == RUN:

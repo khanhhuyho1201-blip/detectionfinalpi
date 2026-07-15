@@ -1290,6 +1290,8 @@
     _hwMiss=[];
     if(s.connected===false) _hwMiss.push("Arduino");
     if(s.camera===false)    _hwMiss.push("Camera");
+    if(s.sensor===false)    _hwMiss.push("Cảm biến (D4)");   // v29.1: probe idle — rút dây là mờ NGAY, cắm lại tự sáng
+    if(s.encoder===false)   _hwMiss.push("Encoder (D2/D3)"); // v29.2: probe idle encoder
     // v29: latch phần cứng từ firmware (Cảm biến/khay · Motor/encoder · Công tắc/stepper)
     if(s.hw_faults) s.hw_faults.forEach(function(f){ _hwMiss.push(f); });
     if(elArd){
@@ -1341,6 +1343,8 @@
         var _miss=[];
         if(!s.connected) _miss.push("Arduino");
         if(s.camera===false) _miss.push("Camera");                          // v29: thiếu camera -> chặn START ngay
+        if(s.sensor===false) _miss.push("Cảm biến (D4)");                   // v29.1: dây cảm biến rút -> chặn START
+        if(s.encoder===false) _miss.push("Encoder (D2/D3)");                // v29.2: dây encoder rút -> chặn START
         if(s.hw_faults) s.hw_faults.forEach(function(f){ _miss.push(f); }); // v29: latch phần cứng (cảm biến/motor/công tắc)
         if(!(s.wifi&&s.wifi.connected)) _miss.push("WiFi");
         if(!s.online) _miss.push("Server");

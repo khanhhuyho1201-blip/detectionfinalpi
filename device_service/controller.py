@@ -813,6 +813,11 @@ class Controller:
                 # v28.4: camera CÓ cắm vào Pi không (tín hiệu phần cứng cho icon). Rẻ: chỉ check
                 #   TỒN TẠI device (KHÔNG mở -> không xung đột Recorder lúc đang quay). FAKE -> coi như có.
                 "camera": bool(os.environ.get("CARD_FAKE_CAMERA")) or os.path.exists(settings.camera.device),
+                # v29.1: dây cảm biến D4 (probe lúc đứng yên, LIVE — tự hồi khi cắm lại).
+                # False -> UI mờ chip + popup "Cảm biến" + chặn START (không cần HOME).
+                "sensor": bool(getattr(self._status, "sensor_ok", True)),
+                # v29.2: dây encoder D2/D3 (probe idle, LIVE — tự hồi khi cắm lại).
+                "encoder": bool(getattr(self._status, "encoder_ok", True)),
                 # v29: latch phần cứng từ firmware -> tên để UI làm MỜ chip + liệt kê popup + chặn START.
                 "hw_faults": [name for bit, name in _HW_NAMES
                               if int(getattr(self._status, "hw", 0)) & bit],
@@ -888,6 +893,11 @@ class Controller:
             # v29: còn latch lỗi phần cứng (cảm biến/motor/home) -> chưa cho start.
             #   (Firmware còn chặn tầng cuối bằng hwFault; UI mờ chip + hiện HOME.)
             if int(getattr(self._status, "hw", 0)):
+                return False
+            # v29.1/29.2: dây cảm biến/encoder đang RÚT (probe idle) -> chưa cho start (tự mở khi cắm lại)
+            if not getattr(self._status, "sensor_ok", True):
+                return False
+            if not getattr(self._status, "encoder_ok", True):
                 return False
             # v28.2 HOME-GATING: chưa chạm công tắc top -> KHÔNG start (UI đã mờ nút; đây là
             # backstop tầng service; firmware còn tầng cuối: B1 bị từ chối với err=NOHOME)
