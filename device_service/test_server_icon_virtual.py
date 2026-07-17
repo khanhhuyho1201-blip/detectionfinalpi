@@ -41,21 +41,21 @@ def run_seq(events, start=None):
 
 
 print("[1] anti-flicker: single/isolated heartbeat timeouts never dim the icon")
-# 5s cadence (v29.4): mỗi lần trượt được poll-nhanh 2s xác nhận -> gói rớt lẻ tự hồi < grace.
-# ok(0), ok(5), miss(10) — chỉ 5s kể từ ok(5) < G — hồi ở poll-nhanh (12), lặp lại.
-st, _ = run_seq([(True, 0), (True, 5), (False, 10), (True, 12), (False, 17), (True, 19)])
-check("stays LIT through isolated blips", st["online"] is True)
+# timings are RELATIVE to the real (possibly-tuned) grace so the test can't go stale
+G = Controller.HB_OFFLINE_GRACE
+# online, then an isolated blip that recovers immediately -> never dims
+st, _ = run_seq([(True, 0), (True, 10), (False, 10 + G * 0.4), (True, 10 + G * 0.5)])
+check("stays LIT through an isolated blip", st["online"] is True)
 
-# online, then a blip WITHIN the grace window (< G giây liên tục fail) -> vẫn sáng
-st, _ = run_seq([(True, 100), (False, 100 + (G - 1))])   # (G-1)s kể từ ok -> chưa hết grace
-check("one miss within grace keeps it LIT", st["online"] is True)
+# a single miss WITHIN the grace window keeps it LIT
+st, _ = run_seq([(True, 100), (False, 100 + G * 0.6)])   # < grace since last ok
+check("a miss within grace keeps it LIT", st["online"] is True)
 
 print("[2] real outage: sustained failure past the grace window dims the icon")
-# rớt THẬT: 2 nhịp trượt liên tiếp vượt grace -> mờ NHANH (~G giây, không phải 25s)
-st, _ = run_seq([(True, 0), (False, 5), (False, G + 1), (False, G + 10)])
-check("dims after >grace continuous outage (~2 missed 5s checks)", st["online"] is False)
+st, _ = run_seq([(True, 0), (False, G * 0.3), (False, G * 0.7), (False, G + 5)])  # > grace
+check("dims after a continuous outage past grace", st["online"] is False)
 # and it re-lights immediately on the next success (no dead time)
-st, _ = run_seq([(True, G + 60)], start=st)
+st, _ = run_seq([(True, 60)], start=st)
 check("re-lights instantly on recovery", st["online"] is True)
 
 print("[3] locked (admin lock) counts as reachable -> LIT + locked flag")

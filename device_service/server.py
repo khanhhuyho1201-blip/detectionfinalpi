@@ -230,7 +230,7 @@ def wifi_setup():
         cmd = ["sudo", "-n", "bash", ap, "up"]
         if _ssid:
             cmd = ["sudo", "-n", "env", f"CARD_AP_SSID={_ssid}", "bash", ap, "up"]
-        subprocess.run(cmd, capture_output=True, text=True, timeout=45)
+        subprocess.run(cmd, capture_output=True, text=True, timeout=150)
     threading.Thread(target=_start, daemon=True).start()
     return jsonify({"ok": True})
 

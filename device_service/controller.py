@@ -154,7 +154,12 @@ class _FakeClient:
 
 class Controller:
     def __init__(self):
-        self._lock = threading.Lock()
+        # [C4] RLock (reentrant): _handle_deprovisioned holds the lock and calls
+        #   cancel(), which re-acquires it — a plain Lock DEADLOCKED the heartbeat
+        #   thread with the motor still feeding (admin deletes device mid-run).
+        #   RLock lets the SAME thread re-enter; cross-thread mutual exclusion is
+        #   unchanged.
+        self._lock = threading.RLock()
         self._status = MachineStatus()
         self._state = "idle"          # idle|checking|recording|uploading|done|failed
         self._target = settings.batch.target_fallback
@@ -171,6 +176,7 @@ class Controller:
         self._recording = False
         self._run_id = None
         self._pending_upload = None
+        self._upload_active = False        # [M7] 1 upload thread tại 1 thời điểm (chống double-start)
         self._direct_unsupported = False   # server cũ không có PUT /runs/{id}/upload
         # mốc tự-gửi-lại: khởi tạo = bây giờ để lần đầu cách boot đúng 1 chu kỳ
         # (monotonic() tính từ lúc BOOT máy — nếu để 0.0 thì nổ ngay tick đầu)
@@ -587,8 +593,11 @@ class Controller:
             self._link.send("B0")
         except Exception:
             pass
-        rec = self._recorder
-        self._recorder = None
+        # [m5] swap the recorder UNDER the lock exactly like cancel()/_abort() —
+        #   a lock-free swap raced them: two threads could each own one Recorder
+        #   → double stop / publish-then-delete of the same .part.
+        with self._lock:
+            rec, self._recorder = self._recorder, None
         if rec:
             try:
                 rec.stop_and_discard()
@@ -955,10 +964,15 @@ class Controller:
                     return None
                 self._test_preview = tp
                 logger.info("test preview camera BẬT (xem thử qua /preview_test.mjpeg)")
-        return self._test_preview.get_latest_jpeg()
+            # [m4] capture UNDER the lock — _stop_test_preview may null it from the
+            #   poll thread between the lock release and the deref -> AttributeError
+            #   froze /preview_test.mjpeg. Read the local, not self._test_preview.
+            tp = self._test_preview
+        return tp.get_latest_jpeg() if tp else None
 
     def _stop_test_preview(self):
-        tp, self._test_preview = self._test_preview, None
+        with self._lock:   # [m4] swap under the lock (RLock: safe if caller holds it)
+            tp, self._test_preview = self._test_preview, None
         if tp:
             try:
                 tp.stop()
@@ -1321,6 +1335,16 @@ class Controller:
             return
         res = self._upload_with_retry(run_id, video_path)
         with self._lock:
+            # [OP-DEFECT G] Operator pressed Stop DURING this upload (state was
+            #   'uploading' but _recording stayed True, so cancel() accepted and
+            #   _cancel_thread already set idle). Do NOT override that back to
+            #   'done'/'failed' — respect the cancel and drop the video so the
+            #   machine lands in ONE consistent state (idle/ready), not done-flip.
+            if self._cancel_evt.is_set():
+                delete_video(video_path)
+                self._pending_upload = None
+                logger.info("upload finished after operator cancel → honour cancel (idle)")
+                return
             self._recording = False
             self._finishing = False
             if res == "ok":
@@ -1367,7 +1391,8 @@ class Controller:
                 # presigned URL trỏ host mà thiết bị không tới được).
                 if not self._direct_unsupported and hasattr(self._client, "upload_direct"):
                     try:
-                        if self._client.upload_direct(run_id, video_path).get("ok"):
+                        res = self._client.upload_direct(run_id, video_path)
+                        if res.get("ok"):
                             logger.info(f"upload ok (via backend) attempt {attempt}: {run_id}")
                             return "ok"
                         raise RuntimeError("direct upload rejected")
@@ -1376,6 +1401,18 @@ class Controller:
                             # server cũ chưa có /upload → dùng presigned từ giờ trở đi
                             self._direct_unsupported = True
                             logger.info("direct upload unsupported by server → presigned fallback")
+                        # [C5] Mất session-token (403 invalid_session) — xảy ra khi
+                        #   service restart/cúp điện SAU khi quay xong: token chỉ ở
+                        #   RAM nên mất. Gửi lại bằng upload-own (device token, không
+                        #   cần session) THAY VÌ coi là "gone" rồi xoá video cả mẻ.
+                        elif self._upload_reason(e) == "invalid_session" and hasattr(self._client, "upload_own"):
+                            try:
+                                if self._client.upload_own(run_id, video_path).get("ok"):
+                                    logger.info(f"upload ok (via upload-own, session lost): {run_id}")
+                                    return "ok"
+                            except Exception as e2:
+                                e = e2   # rơi xuống phân loại lỗi bên dưới
+                                raise
                         else:
                             raise
                 # DỰ PHÒNG: presigned PUT thẳng MinIO (server cũ chưa có /upload)
@@ -1386,18 +1423,47 @@ class Controller:
                     logger.info(f"upload ok attempt {attempt}: {run_id}")
                     return "ok"
             except Exception as e:
-                # Permanent server rejection (4xx, e.g. 403 invalid_session / 404) = the run expired
-                # or was reaped server-side. Resending can NEVER succeed -> report "gone" so the
-                # caller discards the dead video and unblocks (no more infinite Resend loop).
+                # [M6] Phân loại 4xx ĐÚNG — KHÔNG xoá video trên mọi 4xx.
+                #   Chỉ "gone" (bỏ video) khi run THẬT SỰ hết đường: run_not_found.
+                #   already_uploaded -> server ĐÃ có video -> "ok".
+                #   device_locked / invalid_session / 408 / 413 / 429 / 4xx lạ =
+                #   thuận nghịch hoặc tạm thời -> GIỮ video, "retry" (auto-resend
+                #   sau, hoặc _reconcile_pending đối chiếu). Trước đây MỌI 4xx -> gone
+                #   -> khoá tạm/413 Cloudflare cũng xoá mất video 412 lá.
                 if requests and isinstance(e, requests.exceptions.HTTPError):
                     resp = getattr(e, "response", None)
-                    if resp is not None and resp.status_code < 500:
-                        logger.warning(f"upload permanent error {resp.status_code} (run gone): {e}")
-                        return "gone"
+                    if resp is not None:
+                        reason = self._upload_reason(e)
+                        if reason == "already_uploaded":
+                            logger.info(f"server already has run {run_id} → ok")
+                            return "ok"
+                        if resp.status_code < 500:
+                            if reason == "run_not_found":
+                                logger.warning(f"upload run_not_found (gone): {run_id}")
+                                return "gone"
+                            logger.warning(
+                                f"upload 4xx {resp.status_code} reason={reason} "
+                                f"→ KEEP video, retry later: {run_id}")
+                            # lỗi thuận nghịch/tạm → coi như transient, giữ video
                 logger.warning(f"upload {attempt}/{UPLOAD_MAX_RETRIES} failed: {e}")
                 if attempt < UPLOAD_MAX_RETRIES:
                     time.sleep(UPLOAD_RETRY_DELAY)
         return "retry"
+
+    @staticmethod
+    def _upload_reason(e) -> str:
+        """Bóc reason từ body {detail:{reason}} của lỗi HTTP (rỗng nếu không có)."""
+        try:
+            resp = getattr(e, "response", None)
+            if resp is None:
+                return ""
+            body = resp.json()
+            det = body.get("detail", body) if isinstance(body, dict) else {}
+            if isinstance(det, dict):
+                return det.get("reason", "") or ""
+        except Exception:
+            pass
+        return ""
 
     # (đã xoá 2026-07-03: bản reset() "mềm" cũ ở đây bị bản factory-reset phía
     #  dưới ĐÈ MẤT — Python lấy định nghĩa sau — nên nó là dead code từ lâu.
@@ -1472,11 +1538,20 @@ class Controller:
         return False
 
     def retry(self):
-        if not self._pending_upload or self._recording:
-            return False
-        run_id, video_path = self._pending_upload
+        # [M7] Claim the upload ATOMICALLY under the lock. Before, the check was
+        #   lock-free: auto-resend (poll loop) and the operator Resend button
+        #   could BOTH pass and spawn two upload threads for the same video —
+        #   the loser then failed on the already-deleted file and stamped the run
+        #   'failed' though the upload had succeeded, wedging the popup. One
+        #   in-flight upload at a time now.
+        with self._lock:
+            if not self._pending_upload or self._recording or self._upload_active:
+                return False
+            run_id, video_path = self._pending_upload
+            self._upload_active = True
         self._set(state="uploading")
         def th():
+          try:
             # R2: don't re-upload a video the server already has (power cut after
             # the server committed it, before the local delete). Adopt it as done.
             if self._reconcile_pending(run_id):
@@ -1504,6 +1579,9 @@ class Controller:
                     self._error = errors.err("UPL-05", max=UPLOAD_MAX_RETRIES); self._state = "failed"
             if res == "ok":
                 self._auto_idle_after(run_id)   # tự về "Sẵn sàng" sau 5s
+          finally:
+            with self._lock:
+                self._upload_active = False   # [M7] nhả cờ để lần resend sau chạy được
         threading.Thread(target=th, daemon=True).start()
         return True
 
@@ -1564,7 +1642,7 @@ class Controller:
                 cmd = ["sudo", "-n", "bash", ap, "up"]
                 if _ssid:
                     cmd = ["sudo", "-n", "env", f"CARD_AP_SSID={_ssid}", "bash", ap, "up"]
-                subprocess.run(cmd, capture_output=True, text=True, timeout=40)
+                subprocess.run(cmd, capture_output=True, text=True, timeout=150)
                 logger.info("WiFi AP bật cho cài đặt (ssid=%s)", _ssid or "default")
             except Exception as e:
                 logger.warning("không bật được AP: %s", e)

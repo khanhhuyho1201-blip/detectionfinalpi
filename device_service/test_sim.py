@@ -302,7 +302,7 @@ def t_online_offline():
         record("ONLINE", ok1, f"online={s.get('online')} (heartbeat OK)")
     with Server({"CARD_FAKE_SERVER": "1", "CARD_FAKE_OFFLINE": "1",
                  "CARD_FAKE_CAMERA": "ok", "CARD_FAKE_RECORDER": "1"}):
-        s = wait_for(lambda s: s.get("online") is False, 6)
+        s = wait_for(lambda s: s.get("online") is False, 13)
         ok2 = s.get("online") is False
         record("OFFLINE", ok2, f"online={s.get('online')} (heartbeat fail)")
 

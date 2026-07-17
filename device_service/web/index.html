@@ -172,6 +172,13 @@
   html.kiosk .prnTab:active,html.kiosk .prnAddBtn:active,html.kiosk .prnPairBtn:active,
   html.kiosk .run .printbtn:active,html.kiosk .reset:active,html.kiosk .ghostbtn:active,
   html.kiosk .close:active,html.kiosk .prnox:active{transform:scale(.955)}
+  /* [UX] phản hồi chạm cho các nút Yes xác nhận + icon topbar tappable (trước đây
+     KHÔNG có :active, lệch với nút Cancel bên cạnh) — chỉ hiệu ứng TẠM lúc nhấn,
+     look nghỉ không đổi. */
+  html.kiosk #pqYes:active,html.kiosk #cfmYes:active,html.kiosk #pcfYes:active,
+  html.kiosk #prrYes:active,html.kiosk #prnResClose:active{transform:scale(.955);filter:brightness(1.12)}
+  html.kiosk #conn:active,html.kiosk #ardStat:active,html.kiosk #prnStat:active,
+  html.kiosk #wifiBtn:active{filter:brightness(1.35);opacity:.75}
   /* drawer (Settings) — roomier + readable */
   html.kiosk .sheet{width:min(560px,96vw);padding:22px 20px 18px;gap:.6rem}
   html.kiosk .sheet h3{font-size:1.7rem}
@@ -478,7 +485,7 @@
 
   /* ── Error popup (front-and-center on hard failures) ── */
   .errov{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;
-    background:rgba(6,6,8,.92);backdrop-filter:blur(5px);padding:5vh 5vw}
+    background:rgba(6,6,8,.92);backdrop-filter:none;padding:5vh 5vw}
   .errov.open{display:flex;animation:errpop .18s ease}
   @keyframes errpop{from{opacity:0}to{opacity:1}}
   .errbox{background:linear-gradient(180deg,#1c1116,#120c10);border:1px solid rgba(229,86,91,.4);
@@ -492,7 +499,7 @@
     line-height:1.2;text-wrap:balance}
   /* Popup phần cứng mất kết nối — clean, tông vàng trung tính (thông báo), cùng vibe errbox */
   .hwov{position:fixed;inset:0;z-index:48;display:none;align-items:center;justify-content:center;
-    background:rgba(6,6,8,.92);backdrop-filter:blur(5px);padding:5vh 5vw}
+    background:rgba(6,6,8,.92);backdrop-filter:none;padding:5vh 5vw}
   .hwov.open{display:flex;animation:errpop .18s ease}
   .hwbox{background:linear-gradient(180deg,#1a160e,#120f0a);border:1px solid var(--line);
     border-radius:22px;padding:clamp(18px,4.5vh,30px) clamp(22px,6vw,40px);width:min(90vw,400px);
@@ -941,7 +948,7 @@
 
   <div class="sysdown" id="sysdown">
     <h2>Device service disconnected</h2>
-    <p>Reconnecting…</p>
+    <p>Reconnecting</p>
     <div class="spin"></div>
   </div>
 
@@ -1207,6 +1214,14 @@
       elCam=$("cam"),elLive=$("live"),elLiveTxt=$("liveTxt"),elHint=$("hint");
   var _startErr=null;   // when set (missing-connection string), the error popup stays up
   var _hwMiss=[], _hwTimer=null;   // [v28.4] phần cứng đang mất kết nối + timer tự đóng popup 5s
+  // Gộp nhãn phần cứng cho operator: Camera / Sensor giữ riêng; mọi thứ CƠ KHÍ
+  // (Arduino, Encoder, Limit switch/stepper, stepper, motor DC, latch firmware)
+  // gộp thành 1 dòng "Motor". WiFi/Server/Printer đi thẳng (chỉ dùng ở _miss).
+  function _hwLabel(name){
+    if(name==="Camera"||name==="Sensor"||name==="WiFi"||name==="Server"||name==="Printer") return name;
+    return "Motor";
+  }
+  function _pushHw(arr, name){ var l=_hwLabel(name); if(arr.indexOf(l)<0) arr.push(l); }  // dedupe
 
   // ── chip canvas (perf: static parts pre-rendered once to an offscreen
   //    canvas; only the progress arc redraws, and only while the value moves) ──
@@ -1247,7 +1262,7 @@
   var DOT={idle:"",checking:"gold",warmup:"gold",recording:"red",uploading:"blue",done:"green",failed:"red"};
   // status text per machine state (English). checking+warmup share "Preparing".
   var TXT={idle:"Ready",checking:"Preparing",warmup:"Preparing",recording:"Recording",
-           uploading:"Uploading",processing:"Processing",done:"Uploaded",failed:"Error"};
+           uploading:"Sending",processing:"Processing",done:"Uploaded",failed:"Error"};
   var SEV={error:"#F05252",warning:"#F0C000",info:"#4A9EFF"};
   var SEVDOT={error:"red",warning:"gold",info:"blue"};
   // failed-state action -> [button label, internal act key]
@@ -1256,6 +1271,21 @@
   // START. Máy không bao giờ "quay tiếp" giữa chừng (mỗi START = mẻ mới từ 0).
   var ACT={retry:["OK","dismiss"],resend:["Resend","resend"],
            enroll:["Activate","enroll"],reset:["Reset","reset"]};
+  // SHORT status text per error group (chip + popup) — the status line is width-
+  // limited so keep it to a couple of words. The topbar icons already say WHICH
+  // hardware; this line says the ONE situation. English only.
+  var STAT={server:"No server",server_busy:"Finishing",device:"Check machine",
+            operation:"Tray error",nofeed:"No cards",expired:"Run expired",
+            printer:"No printer",activation:"Activate device",reset:"Reset needed",
+            service:"Service needed",incomplete:"Incomplete",unknown:"Something went wrong"};
+  // Video-lifecycle aware status: a finished 412-card video is ALWAYS saved on the
+  // machine first, then uploaded. So the "upload" group must reassure ("Saved"),
+  // not alarm — and tell the operator WHY it isn't up yet (no network) vs going up.
+  function errStatus(s){
+    var g=s.error&&s.error.group;
+    if(g==="upload") return s.online ? "Sending" : "Saved offline";
+    return STAT[g] || (s.error&&s.error.title) || "Error";
+  }
   // WiFi icons (Material Symbols wifi/-2-bar/-1-bar, arcs+dot style) swapped by signal level;
   // lit gold / unlit smoke via .statico. off = full arcs dimmed by .off (unlit-sign style — no slash)
   var WIFI_SVG={
@@ -1287,22 +1317,42 @@
     // Chip = TÍN HIỆU PHẦN CỨNG cắm vào Pi (Arduino serial + camera). SÁNG khi đủ; MỜ + BẤM ĐƯỢC
     //   khi thiếu (bấm -> popup báo cái gì mất kết nối, tự đóng 5s). homed KHÔNG ảnh hưởng chip
     //   (đã có nút HOME lo). Đủ tín hiệu -> KHÔNG bấm được. [v28.4]
+    // Gộp thành 3 nhóm operator quan tâm: Camera · Sensor · Motor (cơ khí).
     _hwMiss=[];
-    if(s.connected===false) _hwMiss.push("Arduino");
-    if(s.camera===false)    _hwMiss.push("Camera");
-    if(s.sensor===false)    _hwMiss.push("Sensor");   // v29.1: probe idle — rút dây là mờ NGAY, cắm lại tự sáng
-    if(s.encoder===false)   _hwMiss.push("Encoder");  // v29.2: probe idle encoder
-    // v29: latch phần cứng từ firmware (Cảm biến/khay · Motor/encoder · Công tắc/stepper)
-    if(s.hw_faults) s.hw_faults.forEach(function(f){ _hwMiss.push(f); });
+    if(s.camera===false)    _pushHw(_hwMiss,"Camera");
+    if(s.sensor===false)    _pushHw(_hwMiss,"Sensor");   // v29.1: probe idle — rút dây là mờ NGAY, cắm lại tự sáng
+    if(s.connected===false) _pushHw(_hwMiss,"Arduino");  // -> Motor (mất board điều khiển)
+    if(s.encoder===false)   _pushHw(_hwMiss,"Encoder");  // -> Motor
+    // v29: latch phần cứng từ firmware (encoder · công tắc/stepper) -> đều gộp Motor
+    if(s.hw_faults) s.hw_faults.forEach(function(f){ _pushHw(_hwMiss,f); });
     if(elArd){
       var _hwOk=(_hwMiss.length===0);
       elArd.className="statico"+(_hwOk?"":" off");
       elArd.style.cursor=_hwOk?"default":"pointer";
     }
+    // [BUG] Đồng bộ popup lỗi phần cứng với trạng thái SỐNG khi đang mở: trước đây
+    //   popup dựng 1 lần lúc bấm rồi đứng yên → cắm lại dây mà popup vẫn liệt kê lỗi
+    //   cũ, hoặc lỗi mới không hiện. Giờ: đang mở thì render lại #hwList theo _hwMiss;
+    //   hết lỗi (_hwMiss rỗng) → tự đóng.
+    if($("hwov").classList.contains("open")){
+      if(_hwMiss.length===0){ closeHwPopup(); }
+      else {
+        var _hl=$("hwList"), _cur=_hwMiss.join("|");
+        if(_hl.dataset.cur!==_cur){
+          _hl.dataset.cur=_cur; _hl.innerHTML="";
+          _hwMiss.forEach(function(m){ var d=document.createElement("div"); d.className="hw-item"; d.textContent=m; _hl.appendChild(d); });
+        }
+      }
+    }
     var nt=s.target||0; if(nt!==target){target=nt;lastFrac=-1;} want=s.count||0; setCount(want); setVal();
     elTarget.textContent=s.target?s.target:"";
     // camera feed shown during warmup + recording + uploading
-    var live=(s.state==="warmup"||s.state==="recording"||s.state==="uploading");
+    // [PERF] KIOSK ẩn preview (html.kiosk .preview{display:none}) → KHÔNG kéo/giải mã
+    //   /preview.mjpeg cho <img> vô hình (đốt CPU + băng thông suốt cả mẻ, 0 hiển thị).
+    //   Chỉ set src ở chế độ non-kiosk (desktop xem preview thật). Quay là server-side,
+    //   không phụ thuộc <img> này.
+    var live=(s.state==="warmup"||s.state==="recording"||s.state==="uploading")
+             && !document.documentElement.classList.contains("kiosk");
     if(live){ if(elCam.getAttribute("src")!=="/preview.mjpeg") elCam.src="/preview.mjpeg"; }
     else if(elCam.getAttribute("src")){ elCam.removeAttribute("src"); }
     elLiveTxt.textContent=(s.state==="warmup")?"Preparing":"REC";
@@ -1315,7 +1365,11 @@
     var active = (s.state==="checking"||s.state==="warmup"||s.state==="recording"||s.state==="uploading");
     var prnWarn = (!s.printer && !active);
     // Printer status now shown by the topbar printer icon (green/red) — not duplicated here.
-    if(s.state==="failed" && s.error){ setStatus(s.error.title, s.error.severity); }
+    if(s.state==="failed" && s.error){
+      // "upload" group = video SAFE on the machine → calm gold dot (warning), not red alarm
+      var _sev = s.error.group==="upload" ? "warning" : s.error.severity;
+      setStatus(errStatus(s), _sev);
+    }
     else if(s.awaiting_result){ setStatus("Processing", null, "processing"); } // upload xong, AI đang chạy
     else { setStatus(TXT[s.state]||s.state, null, s.state); }   // transient warnings (declump/limit) NOT shown — stays "Recording"
     // hint line under the title intentionally hidden for ALL cases — operator
@@ -1324,47 +1378,54 @@
     // main button = the single valid action
     if(s.awaiting_result){elBtn.className="btn";elBtn.textContent="Processing";elBtn.disabled=true;elBtn.dataset.act="";}
     else if(s.state==="idle"||s.state==="done"){
-      // v28.3 MANUAL HOME: sau khi Stop giữa chừng / mất điện / xong mẻ -> platform ở dưới,
-      // stepper CHƯA chạm công tắc top (s.homed===false). KHÔNG tự home. Hiện nút HOME để
-      // user tự bấm (biết máy đang đưa bàn về đỉnh + phát hiện nếu stepper lỗi). Chạm công
-      // tắc top xong (homed=true) thì nút mới đổi thành START.
-      if(s.connected && s.homing){
-        // đang leo về công tắc top — chờ, không bấm được (chỉ chữ HOME, không "...")
+      // [FIX 2026-07] GATE nút thao tác (HOME hay START) theo TẤT CẢ tín hiệu, đồng
+      //   nhất. Trước đây nhánh HOME (connected && !homed) bật nút KHÔNG kiểm tra
+      //   camera/sensor/encoder/hw_faults -> thiếu tín hiệu phần cứng cơ khí (limit
+      //   switch/stepper/encoder/sensor) mà nút HOME vẫn bấm được -> home lỗi / hại
+      //   cơ cấu. GIỜ: thiếu BẤT KỲ tín hiệu nào -> nút MỜ + disabled (không bấm
+      //   được), dù là HOME hay START. Icon topbar mờ cho biết thiếu cái gì.
+      var _miss=[];
+      if(s.camera===false) _pushHw(_miss,"Camera");
+      if(s.sensor===false) _pushHw(_miss,"Sensor");                       // dây cảm biến rút -> chặn
+      if(!s.connected) _pushHw(_miss,"Arduino");                          // -> Motor (mất board điều khiển)
+      if(s.encoder===false) _pushHw(_miss,"Encoder");                     // -> Motor
+      if(s.hw_faults) s.hw_faults.forEach(function(f){ _pushHw(_miss,f); }); // latch phần cứng -> Motor
+      if(!(s.wifi&&s.wifi.connected)) _pushHw(_miss,"WiFi");
+      if(!s.online) _pushHw(_miss,"Server");
+      if(!s.printer) _pushHw(_miss,"Printer");
+      var _blocked=_miss.length>0;
+      // nhãn = thao tác kế tiếp hợp lệ cho trạng thái này (thông tin, dù đang mờ):
+      //   chưa home -> HOME; đã home -> Start
+      var _label=(s.homed===false)?"HOME":"Start";
+      if(_blocked){
+        // thiếu tín hiệu -> MỜ + khoá hẳn (không bấm được), CHUNG cho HOME lẫn START
+        elBtn.className="btn blocked"; elBtn.textContent=_label; elBtn.disabled=true;
+        elBtn.dataset.act=""; elBtn.dataset.miss=_miss.join(", ");
+      }
+      else if(s.homing){
+        // đủ tín hiệu, đang leo về công tắc top — chờ, không bấm được
         elBtn.className="btn ghost"; elBtn.textContent="HOME"; elBtn.disabled=true;
         elBtn.dataset.act=""; elBtn.dataset.miss="";
+        if(_startErr) _startErr=null;
       }
-      else if(s.connected && s.homed===false){
-        // chưa home -> nút HOME (đưa bàn về đỉnh) — điều kiện DUY NHẤT để rồi mới START được
+      else if(s.homed===false){
+        // đủ tín hiệu, CHƯA home -> nút HOME bấm được (đưa bàn về đỉnh)
         elBtn.className="btn"; elBtn.textContent="HOME"; elBtn.disabled=false;
         elBtn.dataset.act="home"; elBtn.dataset.miss="";
         if(_startErr) _startErr=null;
       }
       else {
-        var _miss=[];
-        if(!s.connected) _miss.push("Arduino");
-        if(s.camera===false) _miss.push("Camera");                          // v29: thiếu camera -> chặn START ngay
-        if(s.sensor===false) _miss.push("Sensor");                          // v29.1: dây cảm biến rút -> chặn START
-        if(s.encoder===false) _miss.push("Encoder");                        // v29.2: dây encoder rút -> chặn START
-        if(s.hw_faults) s.hw_faults.forEach(function(f){ _miss.push(f); }); // v29: latch phần cứng (cảm biến/motor/công tắc)
-        if(!(s.wifi&&s.wifi.connected)) _miss.push("WiFi");
-        if(!s.online) _miss.push("Server");
-        if(!s.printer) _miss.push("Printer");   // bắt buộc có máy in mới cho START
-        // Thiếu bất kỳ tín hiệu nào (chưa set up / rớt kết nối) → START MỜ + KHÓA HẲN
-        // (disabled, không bấm được). Các icon topbar mờ đã cho biết thiếu tín hiệu nào.
-        var _blocked=_miss.length>0;
-        elBtn.className="btn"+(_blocked?" blocked":"");
-        elBtn.textContent="Start";
-        elBtn.disabled=_blocked;
-        elBtn.dataset.act=_blocked?"":"start";
-        elBtn.dataset.miss=_miss.join(", ");
-        if(_startErr && !_blocked) _startErr=null;   // reconnected → auto-close the block popup
+        // đủ tín hiệu + đã home -> START bấm được
+        elBtn.className="btn"; elBtn.textContent="Start"; elBtn.disabled=false;
+        elBtn.dataset.act="start"; elBtn.dataset.miss="";
+        if(_startErr) _startErr=null;
       }
     }
     else if(s.state==="checking"||s.state==="warmup"||s.state==="recording"){elBtn.className="btn ghost";elBtn.textContent="Stop";elBtn.disabled=false;elBtn.dataset.act="cancel";}
     else if(s.state==="failed"){var act=ACT[(s.error&&s.error.action)||""];
       if(act){elBtn.className="btn";elBtn.disabled=false;elBtn.textContent=act[0];elBtn.dataset.act=act[1];}
       else{elBtn.className="btn";elBtn.disabled=true;elBtn.textContent="Call support";elBtn.dataset.act="";}}
-    else{elBtn.className="btn";elBtn.textContent=s.state==="checking"?"Preparing":"Processing";elBtn.disabled=true;elBtn.dataset.act="";}
+    else{elBtn.className="btn";elBtn.textContent=s.state==="uploading"?"Sending":(s.state==="checking"?"Preparing":"Processing");elBtn.disabled=true;elBtn.dataset.act="";}
     // ── ERROR POPUP: hard failures pop up front-and-center with the resolving action ──
     var _eov=$("errov");
     if(_startErr){                                     // blocked START — missing connection(s)
@@ -1372,7 +1433,7 @@
       var _eb0=$("errBtn"); _eb0.textContent="OK"; _eb0.dataset.act="__closeErr";
       _eov.classList.add("open");
     } else if(s.state==="failed" && s.error){
-      $("errTitle").textContent=s.error.title||"Error";
+      $("errTitle").textContent=errStatus(s);   // same short, reassuring text as the chip
       var _ea=ACT[(s.error.action)||""], _eb=$("errBtn");
       if(_ea){ _eb.textContent=_ea[0]; _eb.dataset.act=_ea[1]; }
       else{ _eb.textContent="OK"; _eb.dataset.act="dismiss"; }
@@ -1424,16 +1485,16 @@
       if(connected){
         var wkey=w.signal>=66?"high":w.signal>=33?"med":"low";
         if(wb.dataset.wk!==wkey){ wb.innerHTML=WIFI_SVG[wkey]; wb.dataset.wk=wkey; }
-        wb.className="statico"; wb.title="WiFi "+(w.ssid||"")+" · "+(w.signal||0)+"%";
+        wb.className="statico"; wb.title="WiFi "+(w.ssid||"")+" "+(w.signal||0)+"%";
       } else {
         if(wb.dataset.wk!=="off"){ wb.innerHTML=WIFI_SVG.off; wb.dataset.wk="off"; }
-        wb.className="statico off"; wb.title=setup?"Setting up WiFi…":"No WiFi";
+        wb.className="statico off"; wb.title=setup?"Setting up WiFi":"No WiFi";
       }
     }
     // Settings WiFi row
     var wled=$("wifiLed"), wlbl=$("wifiLbl");
     if(wled){
-      if(setup){ wled.className="sr-dot"; wlbl.textContent="Setting up WiFi…"; }
+      if(setup){ wled.className="sr-dot"; wlbl.textContent="Setting up WiFi"; }
       else if(connected){ wled.className="sr-dot ok"; wlbl.textContent=w.ssid||"WiFi"; }
       else{ wled.className="sr-dot err"; wlbl.textContent="No network"; }
     }
@@ -1453,24 +1514,42 @@
   function _scrollOverlayOpen(){
     return document.querySelector(".prnov.open,.sheet.open")!=null;
   }
-  var _pollTimer=null;
+  var _pollTimer=null, _pollSeq=0;
   function poll(){
     if(_pollTimer){clearTimeout(_pollTimer);_pollTimer=null;}
+    // [BUG] Chống 2 phản hồi /api/state về LỆCH THỨ TỰ (pollNow bắn poll mới khi cái
+    //   cũ chưa xong → count nhảy lùi "…6 7 3 9…") VÀ chống 2 timer chạy song song:
+    //   chỉ phiên MỚI NHẤT được apply + đặt lịch tick kế.
+    var _seq=++_pollSeq;
     fetch("/api/state").then(function(r){return r.json();}).then(function(s){
+      if(_seq!==_pollSeq) return;                   // đã có poll mới hơn → bỏ phản hồi cũ
       if(_downCount>=2){location.reload();return;}  // server just restarted → reload for fresh HTML
       _downCount=0;
-      pollMs=(s.state==="recording")?100:(_scrollOverlayOpen()?1500:300); render(s);
+      // [PERF] Cadence theo trạng thái: recording cần thời-gian-thực (100ms);
+      //   checking/warmup/uploading vừa (300ms); overlay cuộn thả lỏng (1500ms);
+      //   idle/done/failed CHỈ cần ~900ms (tap tự re-poll ~5ms qua pollNow nên KHÔNG
+      //   trễ khi bấm). Giảm ~66% poll lúc rảnh — mát máy, không đổi cảm giác.
+      pollMs = (s.state==="recording") ? 100
+             : _scrollOverlayOpen() ? 1500
+             : (s.state==="checking"||s.state==="warmup"||s.state==="uploading") ? 300
+             : 800;
+      render(s);
     }).catch(function(){
+      if(_seq!==_pollSeq) return;                   // phản hồi cũ → bỏ
       pollMs=500; _downCount++;
       $("sysdown").classList.add("show");  // SYS-01 — backend down
       elConn.className="statico off"; if(elPrn) elPrn.className="statico off";
       // keep watchdog alive — renderer is healthy, only the server is down/restarting
       if(_downCount>=2) fetch("/api/heartbeat",{method:"POST"}).catch(function(){});
-    }).finally(function(){_pollTimer=setTimeout(poll,pollMs);});
+    }).finally(function(){
+      if(_seq!==_pollSeq) return;                   // chỉ phiên mới nhất đặt lịch tick kế (1 timer)
+      _pollTimer=setTimeout(poll,pollMs);
+    });
   }
   // Re-poll IMMEDIATELY (called right after a tap action) so the new state shows in a
   // few ms instead of waiting up to a whole poll interval → taps feel real-time.
   function pollNow(){ if(_pollTimer){clearTimeout(_pollTimer);_pollTimer=null;} poll(); }
+  window.pollNow=pollNow;   // cho phép kích cập-nhật-tức-thì từ ngoài (test harness); tap thật vẫn dùng pollNow nội bộ
   poll();
   // [v29.3] Giữ Recent-runs luôn TƯƠI để mở Settings là hiện ngay cùng lúc với Printer/WiFi
   //   (hết cảnh runs pop-in trễ). Rẻ: 1 lần đọc history / 3s; thay innerHTML nên không rò bộ nhớ.
@@ -1478,7 +1557,15 @@
   setInterval(loadHistory, 3000);
 
   // the single main button carries whatever action the current state needs
+  var _actLock=0;
   function doAct(a){
+    if(!a) return;
+    // [BUG] Chống double-submit: nút KHÔNG disable trong lúc POST của chính nó chạy
+    //   (disable làm mờ 50%). 2 chạm nhanh (~200ms) từng bắn 2× POST /api/start →
+    //   2 mẻ. Khoá tái-nhập 600ms: bỏ chạm thứ 2; render() kế khôi phục nút bình thường.
+    var _n=Date.now();
+    if(_n-_actLock<600) return;
+    _actLock=_n;
     _arDeadline=0;
     if(a==="start"){                                       // start mẻ mới (từ 0)
       if(elBtn.dataset.miss){ _startErr=elBtn.dataset.miss; showBlockErr(); return; }  // chặn khi thiếu kết nối
@@ -1525,7 +1612,7 @@
   //   đóng sau 5s. ĐỦ tín hiệu -> _hwMiss rỗng -> bấm không làm gì (render để cursor default).
   function showHwPopup(){
     if(!_hwMiss.length) return;
-    var el=$("hwList"); el.innerHTML="";
+    var el=$("hwList"); el.innerHTML=""; el.dataset.cur=_hwMiss.join("|");
     _hwMiss.forEach(function(m){ var d=document.createElement("div"); d.className="hw-item"; d.textContent=m; el.appendChild(d); });
     $("hwov").classList.add("open");
     clearTimeout(_hwTimer); _hwTimer=setTimeout(closeHwPopup,5000);
@@ -1560,11 +1647,15 @@
       return null;
     }
     var tgt=null, pid=null, lx=0, ly=0, dx0=0, dy0=0, moved=false;
-    var TH=6;   // px: kéo quá ngưỡng này mới coi là "cuộn", dưới ngưỡng = tap/click
+    var TH=11;  // [BUG] px: 6 quá nhạy — chạm rung ~4px (chéo 3x3) đã bị coi là "cuộn"
+                // và nuốt mất tap trên panel USB-touch nhiễu. 11px = tap ổn định, vẫn cuộn tốt.
     document.addEventListener("pointerdown",function(e){
+      moved=false;   // [BUG] reset ở ĐẦU: cuộn kết thúc bằng pointercancel (USB-touch: cuộn
+                     // native → pointercancel, KHÔNG có click theo sau để xoá moved) rồi tap
+                     // vùng KHÔNG cuộn (return sớm bên dưới) → moved kẹt true → tap kế bị nuốt.
       if(e.button && e.button!==0) return;        // chỉ nút trái / ngón chạm
       var t=scrollable(e.target); if(!t) return;  // vùng không cuộn được -> kệ, để click
-      tgt=t; pid=e.pointerId; lx=dx0=e.clientX; ly=dy0=e.clientY; moved=false;
+      tgt=t; pid=e.pointerId; lx=dx0=e.clientX; ly=dy0=e.clientY;
     },true);
     document.addEventListener("pointermove",function(e){
       if(tgt===null||e.pointerId!==pid) return;
@@ -1615,7 +1706,14 @@
     var d=Math.floor(h/24); if(d<7) return d+"d ago";
     return new Date(t).toLocaleDateString("en-US",{month:"short",day:"numeric"});
   }
-  function loadHistory(){fetch("/api/history").then(function(r){return r.json();}).then(function(rs){
+  function loadHistory(){
+    // [PERF] Chỉ tải Recent-runs khi Settings ĐANG mở. Trước đây poll /api/history
+    //   mỗi 3s KỂ CẢ khi Settings đóng (~99% thời gian) → tốn mạng + rebuild innerHTML
+    //   ngoài màn hình + re-add listener. openS toggle "open" TRƯỚC khi gọi hàm này
+    //   nên lúc mở vẫn refresh ngay; đóng thì early-return (interval thành no-op rẻ).
+    var _sh=document.getElementById("sheet");
+    if(!_sh||!_sh.classList.contains("open")) return;
+    fetch("/api/history").then(function(r){return r.json();}).then(function(rs){
     var L=$("runs"),R=$("runsR"); if(!L)return; L.innerHTML=""; if(R)R.innerHTML="";
     if(!rs||!rs.length){L.innerHTML='<div class="run"><span class="id" style="color:var(--dim-2)">No runs yet</span></div>';return;}
     var MAP={recording:["Recording","fail"],uploaded:["Uploaded","queue"],processing:["Processing","queue"],done:["Done","ok"],failed:["Failed","fail"]};
@@ -1670,7 +1768,7 @@
   $("pqYes").addEventListener("click",function(){
     if(_pqBusy||!_pqRun)return; _pqBusy=true;
     var rid=_pqRun, y=$("pqYes");
-    y.disabled=true; y.textContent="Printing…";
+    y.disabled=true; y.textContent="Printing";
     if(pqIsTest(rid)){ setTimeout(pqClose, 800); return; }  // dev preview: không in thật
     // KHÔNG hiện dòng trạng thái nào trong popup (yêu cầu 2026-07-02) —
     // in xong lặng lẽ đóng; in lỗi thì vẫn còn nút Print trong Settings.
@@ -1760,6 +1858,12 @@
 
     // Load and render printer status (sheet row + overlay header)
     function loadPrinterStatus(){
+      // [PERF] Chỉ probe máy in khi Settings HOẶC popup chọn máy in đang mở.
+      //   /api/printer/status là socket.create_connection(timeout=3) — chạy nền mỗi
+      //   3s kể cả khi đóng sẽ CHẶN tới 3s nếu máy in mạng tắt. openS/openPrn toggle
+      //   "open" trước khi gọi nên mở là refresh ngay; đóng → early-return.
+      var _sh=document.getElementById("sheet"), _pv=document.getElementById("prnov");
+      if(!(_sh&&_sh.classList.contains("open")) && !(_pv&&_pv.classList.contains("open"))) return;
       fetch("/api/printer/status").then(function(r){return r.json();}).then(function(d){
         var cfg=d.config||{};
         _cfgName     = cfg.name||"";
@@ -1828,7 +1932,7 @@
             onPick:function(){
               var pb=this;                       // nút Pair vừa bấm (mkCard gọi onPick với this=button)
               confirmChangePrinter(dev.name,function(){
-                pb.disabled=true; pb.textContent="Pairing…";
+                pb.disabled=true; pb.textContent="Pairing";
                 fetch("/api/printer/bt/pair",{method:"POST",headers:{"Content-Type":"application/json"},
                   body:JSON.stringify({mac:dev.mac})}).then(function(r){return r.json();}).then(function(r){
                   if(r.ok){pb.textContent="Paired ✓"; addCfg({backend:"escpos_bt",bt_mac:dev.mac,device:"/dev/rfcomm0",name:dev.name});}

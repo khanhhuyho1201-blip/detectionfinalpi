@@ -4,7 +4,7 @@
 # Dùng NetworkManager (nmcli). KHÔNG cần hostapd/dnsmasq — NM tự cấp DHCP và đặt
 # gateway 10.42.0.1 (trùng CARD_WIFI_PORTAL_URL trong QR).
 #
-#   wifi_ap.sh up      -> bật AP "CardFeeder-XXXX"
+#   wifi_ap.sh up      -> bật AP "CMD - BBSW" (đổi bằng env CARD_AP_SSID)
 #   wifi_ap.sh down    -> tắt AP, để NM tự nối lại WiFi nhà đã lưu
 #   wifi_ap.sh status  -> in trạng thái
 #
@@ -16,7 +16,9 @@ set -uo pipefail
 # SAU down → AP bật lại đè lên mạng vừa nối, máy kẹt AP mode. flock buộc lệnh
 # sau đợi lệnh trước xong hẳn → thứ tự luôn tuần tự đúng.
 exec 9>/run/card_wifi_ap.lock
-flock 9
+# [FIX 2026-07-15] flock co timeout: nmcli ket (NM treo) tung giu lock VINH VIEN
+# -> moi up/down sau deu block, caller timeout xep lop. 120s du cho up cham nhat.
+flock -w 120 9 || { echo "LOI: khong lay duoc lock wifi_ap sau 120s -> thoat." >&2; exit 1; }
 
 IFACE="${CARD_WIFI_IFACE:-wlan0}"
 AP_CON="CardFeederAP"
@@ -29,7 +31,7 @@ except Exception:
     print("XXXX")
 PY
 )"
-AP_SSID="${CARD_AP_SSID:-CMD X BBSW}"
+AP_SSID="${CARD_AP_SSID:-CMD - BBSW}"
 # [FIX MED 2026-07] GHIM mật khẩu AP = "cardfeeder" (1 nguồn duy nhất). QR trong
 #   web/index.html hardcode "cardfeeder"; nếu ở đây cho ${CARD_AP_PASS:-...} rồi ai đó
 #   set CARD_AP_PASS khác -> AP đổi pass mà QR vẫn "cardfeeder" -> điện thoại quét QR
@@ -49,16 +51,30 @@ EOF
 }
 
 captive_on() {
-    pkill -HUP -f "dnsmasq.*dnsmasq-shared" 2>/dev/null \
-        && echo "captive DNS dnsmasq reload OK" \
-        || echo "captive DNS dnsmasq HUP failed (có thể chưa start — sẽ đọc file lúc start)"
     nft delete table ip "$NFT_TABLE" 2>/dev/null
     nft add table ip "$NFT_TABLE" 2>/dev/null
     nft add chain ip "$NFT_TABLE" prerouting "{ type nat hook prerouting priority dstnat; }" 2>/dev/null
     nft add rule ip "$NFT_TABLE" prerouting iifname "$IFACE" tcp dport 80 ip daddr != "$AP_IP" dnat to "$AP_IP":80 2>/dev/null \
         && echo "captive redirect 80 bật" || echo "captive redirect 80 lỗi"
-    nft add rule ip "$NFT_TABLE" prerouting iifname "$IFACE" tcp dport 443 ip daddr != "$AP_IP" reject with tcp reset 2>/dev/null && echo "captive reject 443 bật"
-    nft add rule ip "$NFT_TABLE" prerouting iifname "$IFACE" tcp dport 853 reject with tcp reset 2>/dev/null && echo "captive reject 853 bật"
+    # [FIX PERF 2026-07-15] Ép MỌI DNS về dnsmasq của AP: điện thoại đặt DNS cứng
+    #   (8.8.8.8, DNS riêng của hãng) sẽ query thẳng ra ngoài — AP không có internet
+    #   -> query chết timeout -> phone tưởng "có mạng nhưng chậm", KHÔNG bật popup.
+    #   DNAT về 10.42.0.1:53 -> dnsmasq (address=/#/) trả lời tức thì -> probe chạy ngay.
+    nft add rule ip "$NFT_TABLE" prerouting iifname "$IFACE" udp dport 53 ip daddr != "$AP_IP" dnat to "$AP_IP":53 2>/dev/null \
+        && echo "captive DNS udp53 bật" || echo "captive DNS udp53 lỗi"
+    nft add rule ip "$NFT_TABLE" prerouting iifname "$IFACE" tcp dport 53 ip daddr != "$AP_IP" dnat to "$AP_IP":53 2>/dev/null \
+        && echo "captive DNS tcp53 bật" || echo "captive DNS tcp53 lỗi"
+    # [FIX 2026-07-15] 'reject' KHÔNG hợp lệ trong chain type nat (nft từ chối lệnh,
+    #   2>/dev/null nuốt mất -> rule 443/853 cũ chưa từng chạy). Thay bằng DNAT về
+    #   cổng ĐÓNG trên Pi: kernel tự trả TCP RST / ICMP port-unreachable -> HTTPS,
+    #   QUIC, DoT của phone fail-NGAY thay vì treo chờ timeout -> captive check
+    #   kết luận nhanh -> popup bật nhanh.
+    nft add rule ip "$NFT_TABLE" prerouting iifname "$IFACE" tcp dport 443 ip daddr != "$AP_IP" dnat to "$AP_IP":443 2>/dev/null \
+        && echo "captive fastfail tcp443 bật" || echo "captive fastfail tcp443 lỗi"
+    nft add rule ip "$NFT_TABLE" prerouting iifname "$IFACE" udp dport 443 ip daddr != "$AP_IP" dnat to "$AP_IP":443 2>/dev/null \
+        && echo "captive fastfail udp443 (QUIC) bật" || echo "captive fastfail udp443 lỗi"
+    nft add rule ip "$NFT_TABLE" prerouting iifname "$IFACE" tcp dport 853 ip daddr != "$AP_IP" dnat to "$AP_IP":853 2>/dev/null \
+        && echo "captive fastfail tcp853 (DoT) bật" || echo "captive fastfail tcp853 lỗi"
 }
 
 captive_off() {
@@ -98,14 +114,27 @@ up() {
             wifi-sec.pmf optional \
             wifi-sec.psk "$AP_PASS"
     fi
+    # [FIX PERF CRITICAL 2026-07-15] Ghi DNS-hijack TRƯỚC 'con up': NM spawn dnsmasq
+    #   -shared NGAY trong lúc kích hoạt AP, và dnsmasq CHỈ đọc conf-dir lúc start
+    #   (SIGHUP không reload address=). Trước đây ghi SAU con up rồi HUP -> hijack
+    #   KHÔNG có tác dụng cho phiên AP hiện tại -> điện thoại vào AP probe DNS chết
+    #   -> popup portal không tự bật / rất chậm. File chỉ ảnh hưởng dnsmasq-shared
+    #   (chưa chạy khi đang ở WiFi nhà) nên ghi sớm vô hại; up fail thì captive_off
+    #   phía dưới dọn sạch.
+    _dns_hijack_write
     # RETRY + VERIFY: bật AP tối đa 3 lần, MỖI lần xác minh AP thực sự ACTIVE.
     #   [FIX CRITICAL 2026-07] Trước đây 'nmcli con up' chạy 1 phát KHÔNG check exit code
     #   -> up fail (radio bận nối wifi nhà / rfkill / NM chưa ready) mà script vẫn cài
     #   luật captive + DNS hijack -> AP không lên nhưng mọi HTTP bị ném về 10.42.0.1
     #   (hỏng cả wifi nhà). Giờ: chỉ bật captive SAU khi AP verified-active; fail thì DỌN SẠCH.
+    # [FIX 2026-07-15] --wait 25: nmcli mac dinh doi toi 90s/lan kich hoat ->
+    #   worst-case 3 lan ~280s trong khi MOI caller (watchdog/portal/controller)
+    #   timeout 40s -> bash bi kill giua chung: nft chua cai (popup cham) + lock
+    #   bi giu boi nmcli con song. AP binh thuong len trong 2-5s; 25s la du rong.
+    #   Worst-case moi: 8s rescan + (25+1)+(25+2)+(25+3) ~ 90s < timeout caller 150s.
     local ok=0 i
     for i in 1 2 3; do
-        if nmcli con up "$AP_CON" >/dev/null 2>&1 \
+        if nmcli --wait 25 con up "$AP_CON" >/dev/null 2>&1 \
            && nmcli -t -f NAME con show --active 2>/dev/null | grep -qx "$AP_CON"; then
             ok=1; break
         fi
@@ -118,9 +147,7 @@ up() {
         echo "LỖI: AP '$AP_SSID' KHÔNG lên sau 3 lần -> đã dọn captive, thoát 1." >&2
         exit 1
     fi
-    # AP đã VERIFIED-ACTIVE -> GIỜ mới ghi DNS hijack + bật captive.
-    _dns_hijack_write
-    sleep 0.4
+    # AP đã VERIFIED-ACTIVE -> GIỜ mới cài luật nft (DNS hijack đã ghi TRƯỚC con up).
     captive_on
     echo "AP đã bật. SSID=$AP_SSID  PASS=$AP_PASS  Portal=http://10.42.0.1"
 }

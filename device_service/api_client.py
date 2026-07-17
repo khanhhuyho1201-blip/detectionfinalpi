@@ -41,7 +41,10 @@ class APIClient:
     # to "gone" so the controller can drop local creds and return to un-enrolled.
     # A network/timeout error is NEVER in here — it returns plain False — so a
     # flaky link can never be mistaken for a deletion.
-    _GONE_REASONS = ("device_not_found",)
+    # [m1] device_revoked = admin đã thu hồi máy (vĩnh viễn) → coi như "gone"
+    #   để KHỎI hammer POST /token mỗi 2s (43k req/ngày) + máy hiện màn re-pair,
+    #   thay vì icon offline chung chung không lối thoát.
+    _GONE_REASONS = ("device_not_found", "device_revoked")
 
     def __init__(self, server_url: str, device_id: str, device_key: str):
         self.server_url = server_url.rstrip("/")
@@ -190,6 +193,28 @@ class APIClient:
         r = _put()
         if r.status_code == 401:
             logger.info("401 on direct upload → refresh token and retry")
+            self._fetch_token()
+            r = _put()
+        r.raise_for_status()
+        return r.json()
+
+    def upload_own(self, run_id: str, video_path: str) -> dict:
+        """[C5] Gửi lại video KHÔNG cần session-token — chỉ device token + quyền
+        sở hữu run. Dùng khi service restart/cúp điện làm mất session-token trong
+        RAM (video quay xong SYS-04 pending không còn token để gửi qua /upload).
+        Server (/upload-own) tự mark_uploaded. An toàn: server kiểm run.device_id
+        == device.id nên chỉ gửi được run của chính máy này."""
+        self._ensure_token()
+        url = self._url(f"/api/device/runs/{run_id}/upload-own")
+
+        def _put():
+            h = self._auth_headers()   # KHÔNG kèm session
+            h["Content-Type"] = "video/mp4"
+            with open(video_path, "rb") as f:
+                return _rq().put(url, data=f, headers=h, timeout=(10, 900))
+
+        r = _put()
+        if r.status_code == 401:
             self._fetch_token()
             r = _put()
         r.raise_for_status()

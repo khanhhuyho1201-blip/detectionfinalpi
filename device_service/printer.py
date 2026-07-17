@@ -113,6 +113,24 @@ def _qr_fill(text: str, target_dots: int, border: int = 4, min_module_dots: int 
     return img, box
 
 
+def _center_on_width(img, width_dots: int):
+    """Pad `img` onto a white canvas EXACTLY `width_dots` wide with the QR centred
+    horizontally, so ESC/POS prints it DEAD-CENTRE on the real paper.
+
+    Why not escpos `p.image(img, center=True)`: that centres against the library's
+    DEFAULT profile width (512 dots), NOT the actual roll. On a 58mm/384 roll it
+    pushes the QR right and CLIPS the edge; on 80mm/576 it leaves it left-aligned.
+    Pre-centring on a canvas of the true width makes it correct on every printer."""
+    from PIL import Image
+    w = max(int(width_dots), img.width)
+    w -= w % 8                      # ESC/POS raster width must be a multiple of 8
+    if w < img.width:               # never crop the QR (paranoia; _qr_fill keeps img<=width)
+        w = img.width + ((8 - img.width % 8) % 8)
+    canvas = Image.new("RGB", (w, img.height), "white")
+    canvas.paste(img, ((w - img.width) // 2, 0))
+    return canvas
+
+
 # ── responsive media size for CUPS: honour the printer's REAL paper, not hardcoded A4 ──
 _PAGESIZE_PTS = {"A4": (595, 842), "Letter": (612, 792), "A5": (420, 595),
                  "A6": (298, 420), "Legal": (612, 1008), "A3": (842, 1191)}
@@ -429,7 +447,9 @@ class EscposNetPrinter(Printer):
             if box < 3:
                 logger.warning("EscposNet: giấy %ddot quá hẹp cho QR quét được (%d dot/module)",
                                self._width, box)
-            p.image(img, center=True)
+            # pre-centre on the REAL paper width (escpos center=True uses the wrong
+            # default-profile width → clipped/off-centre on 58/80mm rolls)
+            p.image(_center_on_width(img, self._width))
             p.cut()
             p.close()
             logger.info("EscposNet printed QR for %s → %s:%s (%ddot, box=%d)",
@@ -567,7 +587,8 @@ class EscposFilePrinter(Printer):
             if box < 3:
                 logger.warning("EscposFile: giấy %ddot quá hẹp cho QR quét được (%d dot/module)",
                                self._width, box)
-            p.image(img, center=True)
+            # pre-centre on the REAL paper width (see EscposNet note / _center_on_width)
+            p.image(_center_on_width(img, self._width))
             # đuôi giấy NGẮN NHẤT: "legacy" = ESC i (Masung kiosk — GS V 66 của nó feed ~40cm);
             # "std" = GS V 66 0 (feed vừa đủ tới dao, chuẩn Epson, không +6 dòng như cut() mặc định).
             if self._cut == "legacy":
