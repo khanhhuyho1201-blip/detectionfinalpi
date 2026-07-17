@@ -22,10 +22,10 @@ if ! flock -n 9; then
 fi
 
 # Chọn cổng Arduino: ưu tiên ttyUSB (Nano FTDI/CH340) rồi ttyACM (Uno native-USB).
-# Có board -> dùng cổng THẬT; không có -> "sim" để UI vẫn lên.
+# No board -> fallback REAL port /dev/ttyACM0 (NOT sim): connected=False -> UI shows Arduino/Motor missing + gates START truthfully. Force sim ONLY via explicit CARD_SERIAL_PORT=sim (tests/demo).
 # (Env CARD_SERIAL_PORT đặt sẵn từ ngoài vẫn được tôn trọng — vd ép "sim" để test.)
 DEV="$(ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | head -1)"
-export CARD_SERIAL_PORT="${CARD_SERIAL_PORT:-${DEV:-sim}}"
+export CARD_SERIAL_PORT="${CARD_SERIAL_PORT:-${DEV:-/dev/ttyACM0}}"
 echo "[launch] CARD_SERIAL_PORT=$CARD_SERIAL_PORT" >> "$LOG"
 
 cd "$REPO/device_service" || exit 1
